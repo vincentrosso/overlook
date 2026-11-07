@@ -15,7 +15,7 @@ Run it at login on macOS: `scripts/install-launchd.sh` (undo with `--uninstall`)
 
 ## What it does
 
-**Status.** Every `claude --bg` session: state (working / needs input / done /
+**Status.** Every live Claude Code session, background (`claude --bg`) or a plain `claude` in a terminal: state (working / needs input / done /
 failed), its latest one-line status, the original ask, folder, tokens, pid,
 and when it last moved. Click a card for the full timeline, recent logs,
 attach/logs commands, and a Stop button. Refreshes every 4 seconds.
@@ -33,7 +33,8 @@ It reads what Claude Code already writes to disk; nothing to configure.
 
 | Data | Source |
 |---|---|
-| Session state, status line, ask, tokens | `$CLAUDE_CONFIG_DIR/jobs/*/state.json` |
+| Background session state, status line, ask, tokens | `$CLAUDE_CONFIG_DIR/jobs/*/state.json` |
+| Interactive (terminal) sessions | `sessions/<pid>.json` registry (pid checked alive) + tail of `projects/*/<sessionId>.jsonl` for title, last ask, last reply |
 | Timeline | `jobs/*/timeline.jsonl` |
 | Liveness (pid) | `claude agents --json --all` (cached 10s) |
 | Logs / stop / launch | `claude logs`, `claude stop`, `claude --bg --agent …` |

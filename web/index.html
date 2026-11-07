@@ -234,6 +234,7 @@ function renderStatus() {
       <div class="detail">${esc(s.detail || "—")}</div>
       <div class="intent" title="${esc(s.intent)}">“${esc(s.intent)}”</div>
       <div class="meta">
+        ${s.kind === "interactive" ? `<span class="tag" style="color:var(--input)">terminal</span>` : ""}
         <span class="tag">${esc(s.agent || "claude")}</span>
         <span class="tag" title="${esc(s.cwd)}">${esc(shortPath(s.cwd).split("/").slice(-2).join("/"))}</span>
         ${s.alive ? `<span class="tag" style="color:var(--done)">pid ${s.pid}</span>` : ""}
@@ -287,13 +288,14 @@ async function renderDrawer() {
     const c = stClass(s.state);
     $("#dhd").innerHTML = `<div><h2>${esc(s.name)}</h2><span class="pill st-${c}">${esc(s.state)}</span> <span class="hint mono">${esc(s.id)}</span></div>
       <button class="btn x" data-close>✕</button>`;
-    const tabs = ["overview", "timeline", "logs"];
+    const tabs = s.kind === "interactive" ? ["overview"] : ["overview", "timeline", "logs"];
     const head = `<div class="tabs">${tabs.map(t => `<button data-tab="${t}" class="${d.tab === t ? "on" : ""}">${t[0].toUpperCase() + t.slice(1)}</button>`).join("")}</div>`;
     if (d.tab === "overview") {
       $("#dbd").innerHTML = head + `<dl class="kv">
-        <dt>Now</dt><dd>${esc(s.detail || "—")}</dd>
+        <dt>${s.kind === "interactive" ? "Last reply" : "Now"}</dt><dd>${esc(s.detail || "—")}</dd>
         <dt>Asked</dt><dd style="word-break:normal">${esc(s.intent)}</dd>
         ${s.output ? `<dt>Output</dt><dd>${esc(typeof s.output === "string" ? s.output : JSON.stringify(s.output))}</dd>` : ""}
+        <dt>Kind</dt><dd>${esc(s.kind || "background")}${s.mode ? " · " + esc(s.mode) : ""}</dd>
         <dt>Agent</dt><dd>${esc(s.agent || "claude")}</dd>
         <dt>Folder</dt><dd class="mono">${esc(s.cwd)}</dd>
         <dt>Tokens</dt><dd>${(s.tokens || 0).toLocaleString()}</dd>
@@ -303,9 +305,11 @@ async function renderDrawer() {
         <dt>CLI</dt><dd>${esc(s.cliVersion || "")}</dd>
       </dl>
       <div style="display:flex;gap:8px;flex-wrap:wrap">
+        ${s.kind === "interactive" ? `<span class="hint">Interactive session in a terminal (pid ${esc(s.pid)}). Resume elsewhere with:</span>
+        <button class="btn" data-copy="cd ${esc(s.cwd)} && claude --resume ${esc(s.sessionId)}">Copy resume command</button>` : `
         <button class="btn" data-copy="claude attach ${esc(s.id)}">Copy attach command</button>
         <button class="btn" data-copy="claude logs ${esc(s.id)}">Copy logs command</button>
-        ${s.alive ? `<button class="btn danger" data-stop="${esc(s.id)}">Stop session</button>` : ""}
+        ${s.alive ? `<button class="btn danger" data-stop="${esc(s.id)}">Stop session</button>` : ""}`}
       </div>`;
     } else if (d.tab === "timeline") {
       $("#dbd").innerHTML = head + `<div class="hint">Loading…</div>`;

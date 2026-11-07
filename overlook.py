@@ -25,7 +25,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
-VERSION = "0.1.0"
+VERSION = "0.2.0"
 HOME = Path.home()
 WEB = Path(__file__).resolve().parent / "web"
 ID_RE = re.compile(r"^[A-Za-z0-9_-]{4,64}$")
@@ -109,6 +109,81 @@ def read_json(p: Path):
         return None
 
 
+def pid_alive(pid) -> bool:
+    try:
+        os.kill(int(pid), 0)
+        return True
+    except (OSError, ValueError, TypeError):
+        return False
+
+
+def registry() -> list[dict]:
+    """Every live Claude Code process registers in <config>/sessions/<pid>.json,
+    interactive terminals included. Keep only entries whose pid still exists."""
+    out = []
+    for cdir in config_dirs():
+        sd = cdir / "sessions"
+        if not sd.is_dir():
+            continue
+        for f in sd.glob("*.json"):
+            r = read_json(f)
+            if isinstance(r, dict) and r.get("sessionId") and pid_alive(r.get("pid")):
+                r["_config"] = str(cdir)
+                out.append(r)
+    return out
+
+
+_tx_cache: dict = {}
+
+
+def transcript_info(config: str, session_id: str) -> dict:
+    """Title, latest ask, last reply and activity from a session transcript.
+    Reads only the tail; cached on mtime."""
+    hits = list(Path(config, "projects").glob(f"*/{session_id}.jsonl"))
+    if not hits:
+        return {}
+    f = hits[0]
+    mtime = f.stat().st_mtime
+    c = _tx_cache.get(str(f))
+    if c and c[0] == mtime:
+        return c[1]
+    info: dict = {"mtime": mtime}
+    with open(f, "rb") as fh:
+        size = fh.seek(0, 2)
+        fh.seek(max(0, size - 1_500_000))
+        lines = fh.read().decode("utf-8", "replace").splitlines()[1:] if size > 1_500_000 else \
+            (fh.seek(0) or fh.read().decode("utf-8", "replace").splitlines())
+    for ln in lines:
+        try:
+            r = json.loads(ln)
+        except json.JSONDecodeError:
+            continue
+        t = r.get("type")
+        if t == "ai-title" and r.get("aiTitle"):
+            info["title"] = r["aiTitle"]
+        elif t == "custom-title" and r.get("customTitle"):
+            info["custom"] = r["customTitle"]
+        elif t == "last-prompt" and r.get("lastPrompt"):
+            info["prompt"] = r["lastPrompt"]
+        elif t == "permission-mode":
+            info["mode"] = r.get("permissionMode")
+        elif t == "assistant":
+            msg = r.get("message") or {}
+            info["stop"] = msg.get("stop_reason")
+            info["at"] = r.get("timestamp")
+            text = next((x.get("text") for x in msg.get("content") or []
+                         if isinstance(x, dict) and x.get("type") == "text" and x.get("text")), None)
+            if text:
+                info["reply"] = " ".join(text.split())[:300]
+            u = msg.get("usage") or {}
+            info["tokens"] = sum(u.get(k) or 0 for k in ("input_tokens", "output_tokens",
+                                 "cache_read_input_tokens", "cache_creation_input_tokens"))
+        elif t == "user":
+            info["stop"] = None  # a newer user turn means the model owes a reply
+    _tx_cache[str(f)] = (mtime, info)
+    return info
+
+
 def sessions() -> list[dict]:
     live = live_agents()
     seen: dict[str, dict] = {}
@@ -123,7 +198,7 @@ def sessions() -> list[dict]:
             jid = st.get("daemonShort") or jd.name
             row = live.get(jid, {})
             seen[jid] = {
-                "id": jid,
+                "id": jid, "kind": "background",
                 "name": st.get("name") or row.get("name") or jid,
                 "state": st.get("state") or row.get("state") or "unknown",
                 "status": row.get("status") or st.get("tempo"),
@@ -143,11 +218,36 @@ def sessions() -> list[dict]:
                 "children": st.get("children"),
                 "dir": str(jd),
             }
+    # Live processes with no readable job: interactive terminals, plus jobs
+    # that have not written state.json yet.
+    by_sid = {v.get("sessionId"): v for v in seen.values()}
+    for r in registry():
+        sid = r["sessionId"]
+        if sid in by_sid:
+            by_sid[sid].update(pid=r["pid"], alive=True)
+            continue
+        jid = sid[:8]
+        tx = transcript_info(r["_config"], sid)
+        recent = tx.get("mtime") and time.time() - tx["mtime"] < 90
+        state = "working" if (recent and tx.get("stop") != "end_turn") else (
+            "waiting" if tx.get("stop") == "end_turn" else ("working" if recent else "idle"))
+        updated = _ms_iso((tx.get("mtime") or 0) * 1000) or _ms_iso(r.get("startedAt"))
+        seen[jid] = {
+            "id": jid, "kind": "background" if find_job_dir(jid) else "interactive",
+            "name": tx.get("custom") or tx.get("title") or Path(r.get("cwd", "")).name or jid,
+            "state": state, "status": None,
+            "detail": tx.get("reply") or "", "intent": tx.get("prompt") or "",
+            "output": None, "tokens": tx.get("tokens") or 0, "cwd": r.get("cwd", ""),
+            "agent": r.get("agent") or "claude", "pid": r.get("pid"), "alive": True,
+            "createdAt": _ms_iso(r.get("startedAt")), "updatedAt": updated,
+            "cliVersion": r.get("version"), "sessionId": sid, "mode": tx.get("mode"),
+            "dir": None,
+        }
     # Sessions the CLI knows about that have no job folder we can read.
     for jid, row in live.items():
         if jid and jid not in seen:
             seen[jid] = {
-                "id": jid, "name": row.get("name") or jid, "state": row.get("state", "unknown"),
+                "id": jid, "kind": "background", "name": row.get("name") or jid, "state": row.get("state", "unknown"),
                 "status": row.get("status"), "detail": "", "intent": "", "tokens": 0,
                 "cwd": row.get("cwd", ""), "agent": None, "pid": row.get("pid"),
                 "alive": bool(row.get("pid")),
