@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Overlook</title>
-<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='7' fill='%23b4462e'/><path d='M6 26V12l10-6 10 6v14' fill='none' stroke='%23f4ede4' stroke-width='2.5'/><circle cx='16' cy='17' r='3' fill='%23f4ede4'/></svg>">
+<link rel="icon" id="fav" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='7' fill='%23b4462e'/><path d='M6 26V12l10-6 10 6v14' fill='none' stroke='%23f4ede4' stroke-width='2.5'/><circle cx='16' cy='17' r='3' fill='%23f4ede4'/></svg>">
 <style>
 :root {
   --bg: #111214; --panel: #191b1f; --panel2: #202329; --line: #2c3038;
@@ -86,6 +86,14 @@ kbd { font: 11px var(--mono); color: var(--faint); border: 1px solid var(--line)
 .pill.st-input { background: rgba(242,184,75,.16); color: var(--input); }
 .pill.st-failed { background: rgba(239,91,91,.15); color: var(--failed); }
 .pill.st-idle { background: rgba(138,143,153,.15); color: var(--idle); }
+.sess.st-input { animation: needs 1.3s ease-in-out infinite; border-color: rgba(242,184,75,.55); }
+@keyframes needs { 50% { box-shadow: 0 0 0 2px var(--input), 0 0 22px rgba(242,184,75,.4); } }
+.sess.st-input .pill { animation: pulse 1.3s ease-in-out infinite; }
+.needbar { display: none; align-items: center; gap: 8px; background: rgba(242,184,75,.14); color: var(--input);
+  border: 1px solid rgba(242,184,75,.5); border-radius: 999px; padding: 5px 12px; font-weight: 600; cursor: pointer;
+  animation: needs 1.3s ease-in-out infinite; }
+.needbar.on { display: flex; }
+.btn.on { border-color: var(--input); color: var(--input); }
 .pulse { animation: pulse 1.6s ease-in-out infinite; }
 @keyframes pulse { 50% { opacity: .35; } }
 .right { margin-left: auto; }
@@ -140,7 +148,9 @@ footer { color: var(--faint); font-size: 12px; text-align: center; padding: 20px
     <button data-view="hub">Agent Hub<span class="count" id="c-hub"></span></button>
   </nav>
   <div class="grow"></div>
+  <span class="needbar" id="needbar" data-f="input"></span>
   <span class="hint" id="refreshed"></span>
+  <button class="btn" id="alertBtn" title="Desktop notification + chime when a session needs you">🔔 Alerts off</button>
   <button class="btn primary" id="newBtn">+ New agent run</button>
 </header>
 
@@ -266,7 +276,7 @@ function renderHub() {
       <p>${esc(a.summary || a.description || "No description.")}</p>
       <div class="meta">
         <span class="tag src-${esc(a.source)}">${esc(a.source)}</span>
-        <span class="tag model">${esc(a.model)}</span>
+        <span class="tag model" title="${a.modelOverride ? "your default (agent file says " + esc(a.model) + ")" : "from agent file"}">${esc(a.modelOverride || a.model)}${a.modelOverride ? " ★" : ""}</span>
         <span>${a.tools.length && a.tools[0] !== "*" ? a.tools.length + " tools" : "all tools"}</span>
         <button class="btn sm right" data-launch="${esc(a.id)}">Launch</button>
       </div>
@@ -335,12 +345,81 @@ async function renderDrawer() {
     const tabs = ["about", "prompt"];
     $("#dbd").innerHTML = `<div class="tabs">${tabs.map(t => `<button data-tab="${t}" class="${d.tab === t ? "on" : ""}">${t === "about" ? "About" : "System prompt"}</button>`).join("")}</div>` +
       (d.tab === "about" ? `<p class="desc">${esc(a.description || "No description.")}</p>
+        <div class="form" style="margin-bottom:16px"><label>Default model when you launch this agent
+          <select id="modelSel" data-agent="${esc(a.id)}">
+            <option value="">Agent file default (${esc(a.model)})</option>
+            ${MODELS.map(m => `<option ${a.modelOverride === m ? "selected" : ""}>${m}</option>`).join("")}
+            ${a.modelOverride && !MODELS.includes(a.modelOverride) ? `<option selected>${esc(a.modelOverride)}</option>` : ""}
+          </select></label>
+          <span class="hint">Saved in Overlook's settings, not in the agent file, so plugin updates won't wipe it.</span></div>
         <dl class="kv"><dt>Invoke as</dt><dd class="mono">--agent ${esc(a.id)}</dd>
         <dt>Tools</dt><dd>${a.tools.length ? a.tools.map(t => `<span class="tag">${esc(t)}</span>`).join(" ") : "all (inherits)"}</dd>
         ${a.path ? `<dt>File</dt><dd class="mono">${esc(shortPath(a.path))}</dd>` : ""}</dl>`
       : `<pre>${esc(a.body || "(built-in agent: no prompt file)")}</pre>`);
   }
 }
+
+// ---------- models
+let MODELS = ["fable", "opus", "sonnet", "haiku"];
+function modelOpts(agentId) {
+  const a = S.agents.find(x => x.id === agentId) || {};
+  const pick = a.modelOverride || "";
+  return `<option value="">${esc(a.model && a.model !== "inherit" ? "Agent default (" + a.model + ")" : "Default (your Claude setting)")}</option>` +
+    MODELS.map(m => `<option ${pick === m ? "selected" : ""}>${m}</option>`).join("") +
+    (pick && !MODELS.includes(pick) ? `<option selected>${esc(pick)}</option>` : "");
+}
+document.addEventListener("change", async e => {
+  if (e.target.id !== "modelSel") return;
+  const agent = e.target.dataset.agent, model = e.target.value;
+  try {
+    await api("/api/settings/agent-model", { agent, model });
+    const a = S.agents.find(x => x.id === agent); if (a) a.modelOverride = model || null;
+    renderHub(); toast(`${agent} → ${model || "agent default"}`);
+  } catch (err) { toast("Save failed: " + err.message, 6000); }
+});
+
+// ---------- needs-input alerts
+const ALERTS = { on: localStorage.ovAlerts === "1", prev: null };
+function paintAlertBtn() { const b = $("#alertBtn"); b.textContent = ALERTS.on ? "🔔 Alerts on" : "🔕 Alerts off"; b.classList.toggle("on", ALERTS.on); }
+$("#alertBtn").addEventListener("click", async () => {
+  if (!ALERTS.on && "Notification" in window && Notification.permission === "default") await Notification.requestPermission();
+  ALERTS.on = !ALERTS.on; localStorage.ovAlerts = ALERTS.on ? "1" : "0"; paintAlertBtn();
+  if (ALERTS.on) chime();
+});
+function chime() {
+  try {
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    [880, 1320].forEach((f, i) => {
+      const o = ctx.createOscillator(), g = ctx.createGain();
+      o.frequency.value = f; o.connect(g); g.connect(ctx.destination);
+      const t = ctx.currentTime + i * 0.16;
+      g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(0.18, t + 0.02); g.gain.exponentialRampToValueAtTime(0.0001, t + 0.28);
+      o.start(t); o.stop(t + 0.3);
+    });
+  } catch {}
+}
+const FAV = $("#fav").href;
+function badge(n) {
+  document.title = n ? `(${n}) needs you · Overlook` : "Overlook";
+  const bar = $("#needbar"); bar.classList.toggle("on", n > 0); bar.textContent = `● ${n} need${n === 1 ? "s" : ""} you`;
+  $("#fav").href = n ? FAV.replace("</svg>", "<circle cx='25' cy='7' r='6.5' fill='%23f2b84b' stroke='%23111214' stroke-width='1.5'/></svg>") : FAV;
+}
+function checkAlerts() {
+  const need = S.sessions.filter(s => stClass(s.state) === "input");
+  badge(need.length);
+  const now = new Map(S.sessions.map(s => [s.id, stClass(s.state)]));
+  if (ALERTS.prev) {
+    const fresh = need.filter(s => ALERTS.prev.get(s.id) !== "input");
+    if (fresh.length && ALERTS.on) {
+      chime();
+      if ("Notification" in window && Notification.permission === "granted")
+        fresh.forEach(s => { const n = new Notification(`${s.name} needs you`, { body: s.detail || s.intent || "", tag: s.id });
+          n.onclick = () => { window.focus(); openDrawer("session", s.id); }; });
+    }
+  }
+  ALERTS.prev = now;
+}
+paintAlertBtn();
 
 // ---------- launch form
 function openLaunch(agentId) {
@@ -358,10 +437,11 @@ function openLaunch(agentId) {
       <label>Permission mode<select name="permissionMode">
         ${["auto", "default", "acceptEdits", "plan", "bypassPermissions"].map(m => `<option ${m === (localStorage.ovMode || "auto") ? "selected" : ""}>${m}</option>`).join("")}</select></label>
     </div>
-    <label>Model override (optional)<input name="model" placeholder="e.g. opus, sonnet, haiku"></label>
+    <label>Model<select name="model">${modelOpts(agentId || "claude")}</select></label>
     <div style="display:flex;gap:10px;align-items:center"><button class="btn primary" type="submit">Launch</button><span class="hint">⌘↵ to launch</span></div>
   </form>`;
   const f = $("#lf");
+  f.agent.addEventListener("change", () => { f.model.innerHTML = modelOpts(f.agent.value); });
   f.prompt.focus();
   f.addEventListener("keydown", e => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) f.requestSubmit(); });
   f.addEventListener("submit", async e => {
@@ -391,7 +471,7 @@ document.addEventListener("click", async e => {
   if (t.id === "newBtn" || t.id === "emptyNew") { e.preventDefault(); return openLaunch(); }
   if (t.id === "scrim" || t.dataset.close !== undefined) return closeDrawer();
   if (t.dataset.view) return setView(t.dataset.view);
-  if (t.dataset.f) { S.sfilter = t.dataset.f; return renderStatus(); }
+  if (t.dataset.f) { S.sfilter = S.sfilter === t.dataset.f && t.id === "needbar" ? "all" : t.dataset.f; setView("status"); return renderStatus(); }
   if (t.dataset.d) { S.sdir = S.sdir === t.dataset.d ? null : t.dataset.d; return renderStatus(); }
   if (t.dataset.k) { S.facets.has(t.dataset.k) ? S.facets.delete(t.dataset.k) : S.facets.add(t.dataset.k); return renderHub(); }
   if (t.dataset.s) return openDrawer("session", t.dataset.s);
@@ -416,7 +496,7 @@ document.addEventListener("keydown", e => {
 async function refresh() {
   try {
     const { sessions } = await api("/api/sessions");
-    S.sessions = sessions; renderStatus();
+    S.sessions = sessions; renderStatus(); checkAlerts();
     $("#refreshed").textContent = "updated " + new Date().toLocaleTimeString([], {hour: "2-digit", minute: "2-digit", second: "2-digit"});
     if (S.drawer?.kind === "session" && S.drawer.tab === "overview") renderDrawer();
   } catch (e) { $("#refreshed").textContent = "⚠ server unreachable"; }
@@ -425,6 +505,7 @@ async function refresh() {
   setView(location.hash === "#hub" ? "hub" : "status");
   const info = await api("/api/info").catch(() => ({}));
   $("#ver").textContent = info.version ? "v" + info.version : "";
+  if (info.models) MODELS = info.models;
   $("#cfg").textContent = (info.configDirs || []).map(shortPath).join(", ");
   await refresh();
   const [{ agents }, { dirs }] = await Promise.all([api("/api/agents"), api("/api/dirs")]);

@@ -25,12 +25,31 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
-VERSION = "0.2.0"
+VERSION = "0.3.0"
 HOME = Path.home()
 WEB = Path(__file__).resolve().parent / "web"
 ID_RE = re.compile(r"^[A-Za-z0-9_-]{4,64}$")
 AGENT_RE = re.compile(r"^[A-Za-z0-9_.:-]{1,128}$")
 PERMISSION_MODES = {"default", "acceptEdits", "auto", "plan", "bypassPermissions"}
+
+
+MODELS = ["fable", "opus", "sonnet", "haiku"]
+SETTINGS = Path(os.environ.get("OVERLOOK_SETTINGS", HOME / ".config" / "overlook" / "settings.json"))
+_settings_lock = threading.Lock()
+
+
+def load_settings() -> dict:
+    d = read_json(SETTINGS) if SETTINGS.exists() else None
+    d = d if isinstance(d, dict) else {}
+    d.setdefault("agentModels", {})
+    return d
+
+
+def save_settings(d: dict) -> None:
+    SETTINGS.parent.mkdir(parents=True, exist_ok=True)
+    tmp = SETTINGS.with_suffix(".tmp")
+    tmp.write_text(json.dumps(d, indent=2))
+    tmp.replace(SETTINGS)
 
 
 def log(msg: str) -> None:
@@ -394,8 +413,10 @@ def agents() -> list[dict]:
         if pdir.is_dir():
             for f in pdir.glob("**/agents/*.md"):
                 add(f, "plugin", plugin=_plugin_name(f))
+    overrides = load_settings()["agentModels"]
     for a in out.values():
         a.pop("_mtime", None)
+        a["modelOverride"] = overrides.get(a["id"])
         a.setdefault("summary", a["description"])
     order = {"user": 0, "project": 1, "built-in": 2, "plugin": 3}
     return sorted(out.values(), key=lambda a: (order.get(a["source"], 9), a["id"].lower()))
@@ -431,7 +452,7 @@ def launch(body: dict) -> tuple[int, dict]:
     prompt = str(body.get("prompt") or "").strip()
     name = str(body.get("name") or "").strip()[:80]
     mode = str(body.get("permissionMode") or "auto")
-    model = str(body.get("model") or "").strip()
+    model = str(body.get("model") or "").strip() or load_settings()["agentModels"].get(agent, "")
     if not AGENT_RE.match(agent):
         return 400, {"error": "bad agent name"}
     if not prompt:
@@ -503,8 +524,10 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(200, {"agents": agents()})
             if p == "/api/dirs":
                 return self._send(200, {"dirs": dirs()})
+            if p == "/api/settings":
+                return self._send(200, {"settings": load_settings(), "models": MODELS, "path": str(SETTINGS)})
             if p == "/api/info":
-                return self._send(200, {"version": VERSION, "claude": claude_bin(),
+                return self._send(200, {"version": VERSION, "claude": claude_bin(), "models": MODELS,
                                         "configDirs": [str(d) for d in config_dirs()]})
             m = re.match(r"^/api/sessions/([^/]+)/(timeline|logs)$", p)
             if m and ID_RE.match(m.group(1)):
@@ -532,6 +555,19 @@ class Handler(BaseHTTPRequestHandler):
         if p == "/api/launch":
             code, res = launch(body)
             return self._send(code, res)
+        if p == "/api/settings/agent-model":
+            agent, model = str(body.get("agent") or ""), str(body.get("model") or "").strip()
+            if not AGENT_RE.match(agent) or (model and not AGENT_RE.match(model)):
+                return self._send(400, {"error": "bad agent or model"})
+            with _settings_lock:
+                st = load_settings()
+                if model:
+                    st["agentModels"][agent] = model
+                else:
+                    st["agentModels"].pop(agent, None)
+                save_settings(st)
+            log(f"model for {agent} -> {model or 'agent default'}")
+            return self._send(200, {"ok": True, "settings": st})
         m = re.match(r"^/api/sessions/([^/]+)/stop$", p)
         if m and ID_RE.match(m.group(1)):
             log(f"stop {m.group(1)}")
