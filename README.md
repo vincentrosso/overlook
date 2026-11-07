@@ -27,6 +27,26 @@ filter by source, model or plugin. Open a card to read its description and
 full system prompt, then **Launch** it into any folder with a task, a
 permission mode and an optional model override.
 
+## One click for everything
+
+- **✔ Yes / Go** on any session that needs you. Overlook reads its screen and
+  picks the right answer: permission prompt → "Yes, and don't ask again";
+  question menu → first option; plain "your turn" → types `yes, go ahead`.
+- **Auto-yes** (per session, off by default): answers for you after it has been
+  stuck 20s, at most 10 times an hour.
+- **Open** puts the live session in a new terminal window (Ghostty, iTerm or
+  Terminal; override with `OVERLOOK_TERMINAL`).
+- Needs-you cards blink, the tab title and icon show a count, and 🔔 Alerts
+  adds a desktop notification + chime.
+- Progress counters (`165/1198`), `ETA ~21:50 PT` and `2,407 (+266)` in a
+  status line become a bar, a live countdown and a big number. With a counter
+  but no stated ETA, Overlook estimates one from the job's own timeline.
+- Per-agent default model, chosen in the Hub (saved in
+  `~/.config/overlook/settings.json`, never in the agent file).
+
+Background sessions only for Yes/Open/Stop: an interactive `claude` in a
+terminal can't be attached, so its card shows status and a "Go to terminal".
+
 ## How it works
 
 It reads what Claude Code already writes to disk; nothing to configure.

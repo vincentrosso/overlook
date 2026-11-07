@@ -89,11 +89,32 @@ kbd { font: 11px var(--mono); color: var(--faint); border: 1px solid var(--line)
 .sess.st-input { animation: needs 1.3s ease-in-out infinite; border-color: rgba(242,184,75,.55); }
 @keyframes needs { 50% { box-shadow: 0 0 0 2px var(--input), 0 0 22px rgba(242,184,75,.4); } }
 .sess.st-input .pill { animation: pulse 1.3s ease-in-out infinite; }
-.needbar { display: none; align-items: center; gap: 8px; background: rgba(242,184,75,.14); color: var(--input);
-  border: 1px solid rgba(242,184,75,.5); border-radius: 999px; padding: 5px 12px; font-weight: 600; cursor: pointer;
-  animation: needs 1.3s ease-in-out infinite; }
-.needbar.on { display: flex; }
 .btn.on { border-color: var(--input); color: var(--input); }
+.seg { display: flex; gap: 8px; flex-wrap: wrap; }
+.big { border: 1px solid var(--line); background: var(--panel); color: var(--dim); border-radius: 11px; padding: 11px 20px;
+  font-size: 15px; font-weight: 600; cursor: pointer; display: inline-flex; align-items: center; gap: 9px; min-height: 46px; }
+.big:hover { border-color: #3d424d; color: var(--ink); }
+.big.on { background: var(--panel2); color: var(--ink); border-color: var(--accent); }
+.big .n { font-variant-numeric: tabular-nums; color: var(--faint); font-weight: 700; }
+.big.on .n { color: var(--accent2); }
+.big.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+.big.primary:hover { background: var(--accent2); }
+.big.danger { color: var(--failed); }
+.big.alert { color: var(--input); border-color: rgba(242,184,75,.6); animation: needs 1.3s ease-in-out infinite; }
+.big.alert .n { color: var(--input); }
+.prog { margin: 8px 0 6px; }
+.bar { height: 8px; border-radius: 99px; background: #262a31; overflow: hidden; }
+.bar i { display: block; height: 100%; background: linear-gradient(90deg, var(--working), #7fd0ff); border-radius: 99px; transition: width .4s; }
+.st-done .bar i { background: var(--done); }
+.prog .nums { display: flex; justify-content: space-between; font-size: 12px; color: var(--dim); margin-top: 4px; font-variant-numeric: tabular-nums; }
+.prog .nums b { color: var(--ink); }
+.counter { display: flex; align-items: baseline; gap: 8px; margin: 6px 0 2px; }
+.counter b { font-size: 26px; font-weight: 750; font-variant-numeric: tabular-nums; letter-spacing: -.01em; }
+.counter span { color: var(--done); font-weight: 600; }
+.eta { display: inline-flex; gap: 6px; align-items: center; font-size: 12.5px; font-weight: 600; color: var(--ink);
+  background: rgba(63,180,240,.12); border: 1px solid rgba(63,180,240,.35); border-radius: 7px; padding: 2px 8px; }
+.eta.est { background: none; border-style: dashed; color: var(--dim); }
+.eta.late { color: var(--failed); border-color: rgba(239,91,91,.5); background: rgba(239,91,91,.1); }
 .pulse { animation: pulse 1.6s ease-in-out infinite; }
 @keyframes pulse { 50% { opacity: .35; } }
 .right { margin-left: auto; }
@@ -143,38 +164,38 @@ footer { color: var(--faint); font-size: 12px; text-align: center; padding: 20px
     <svg viewBox="0 0 32 32"><rect width="32" height="32" rx="7" fill="#b4462e"/><path d="M6 26V12l10-6 10 6v14" fill="none" stroke="#f4ede4" stroke-width="2.5"/><circle cx="16" cy="17" r="3" fill="#f4ede4"/></svg>
     Overlook <small id="ver"></small>
   </div>
-  <nav>
-    <button data-view="status" class="on">Status<span class="count" id="c-status"></span></button>
-    <button data-view="hub">Agent Hub<span class="count" id="c-hub"></span></button>
-  </nav>
+  <div class="seg">
+    <button class="big on" data-view="status" id="navStatus">Status <span class="n" id="c-status"></span></button>
+    <button class="big" data-view="hub">Agent Hub <span class="n" id="c-hub"></span></button>
+  </div>
   <div class="grow"></div>
-  <span class="needbar" id="needbar" data-f="input"></span>
   <span class="hint" id="refreshed"></span>
-  <button class="btn" id="alertBtn" title="Desktop notification + chime when a session needs you">🔔 Alerts off</button>
-  <button class="btn primary" id="newBtn">+ New agent run</button>
+  <div class="seg">
+    <button class="big" id="alertBtn" title="Desktop notification + chime when a session needs you">🔕 Alerts off</button>
+    <button class="big primary" id="newBtn">+ New run</button>
+  </div>
 </header>
 
 <main>
   <section id="v-status">
-    <div class="summary" id="summary"></div>
+    <div class="toolbar"><div class="seg" id="summary"></div></div>
     <div class="toolbar">
       <div class="search">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
         <input id="sq" placeholder="Filter sessions by name, detail, folder…"><kbd>/</kbd>
       </div>
-      <div class="chips" id="sdirs"></div>
     </div>
     <div class="grid" id="sessions"></div>
   </section>
 
   <section id="v-hub" hidden>
+    <div class="toolbar"><div class="seg" id="facets"></div></div>
     <div class="toolbar">
       <div class="search">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
         <input id="aq" placeholder="Search agents: name, description, tools, plugin…"><kbd>/</kbd>
       </div>
     </div>
-    <div class="toolbar"><div class="chips" id="facets"></div></div>
     <div class="grid" id="agents"></div>
   </section>
 </main>
@@ -221,55 +242,64 @@ const COLORS = { red: "#ef7b6b", blue: "#6bb6ef", green: "#6bd49a", yellow: "#ef
 const avatar = a => `<span class="av" style="background:${COLORS[a.color] || `hsl(${hue(a.id)} 55% 68%)`}">${esc((a.name[0] || "?").toUpperCase())}</span>`;
 
 // ---------- status view
+const fmtN = n => Number(n).toLocaleString();
+const dur = sec => { sec = Math.abs(sec); if (sec < 90) return `${Math.round(sec)}s`; if (sec < 5400) return `${Math.round(sec / 60)}m`;
+  const h = Math.floor(sec / 3600), m = Math.round((sec % 3600) / 60); return m ? `${h}h ${m}m` : `${h}h`; };
+const clock = ep => new Date(ep * 1000).toLocaleTimeString([], {hour: "numeric", minute: "2-digit"});
+function progressHTML(s) {
+  const p = s.progress || {}; let h = "";
+  if (p.count != null && p.den == null)
+    h += `<div class="counter"><b>${fmtN(p.count)}</b>${p.delta ? `<span>+${fmtN(p.delta)}</span>` : ""}</div>`;
+  if (p.pct != null)
+    h += `<div class="prog"><div class="bar"><i style="width:${Math.min(100, p.pct)}%"></i></div>
+      <div class="nums"><span>${p.den != null ? `<b>${fmtN(p.num)}</b> / ${fmtN(p.den)}` : ""}</span><b>${p.pct}%</b></div></div>`;
+  if (p.etaAt && stClass(s.state) !== "done") {
+    const left = p.etaAt - Date.now() / 1000, late = left < 0;
+    h += `<div style="margin:4px 0 6px"><span class="eta ${late ? "late" : p.etaSource === "estimated" ? "est" : ""}" title="${esc(p.etaText || "estimated from progress rate" + (p.ratePerMin ? ` (${p.ratePerMin}/min)` : ""))}">
+      ${p.etaSource === "estimated" ? "≈ " : ""}ETA ${clock(p.etaAt)} · ${late ? dur(left) + " late" : "in " + dur(left)}</span></div>`;
+  }
+  return h;
+}
+const FILTERS = [["all", "All"], ["input", "Needs you"], ["working", "Working"], ["done", "Done"]];
 function renderStatus() {
   const counts = { all: S.sessions.length, working: 0, input: 0, done: 0, failed: 0, idle: 0 };
   S.sessions.forEach(s => counts[stClass(s.state)]++);
-  $("#c-status").textContent = counts.working ? `${counts.working} live` : "";
-  const labels = [["all", "All", "var(--dim)"], ["working", "Working", "var(--working)"], ["input", "Needs input", "var(--input)"],
-                  ["done", "Done", "var(--done)"], ["failed", "Failed", "var(--failed)"], ["idle", "Other", "var(--idle)"]];
-  $("#summary").innerHTML = labels.filter(([k]) => k === "all" || counts[k]).map(([k, l, c]) =>
-    `<div class="stat ${S.sfilter === k ? "on" : ""}" data-f="${k}"><div class="n">${counts[k]}</div><div class="l"><span class="dot" style="background:${c}"></span>${l}</div></div>`).join("");
-
-  const dirs = [...new Set(S.sessions.map(s => s.cwd).filter(Boolean))];
-  $("#sdirs").innerHTML = dirs.length > 1 ? dirs.map(d => `<span class="chip ${S.sdir === d ? "on" : ""}" data-d="${esc(d)}">${esc(shortPath(d).split("/").pop() || d)}</span>`).join("") : "";
-
+  $("#summary").innerHTML = FILTERS.map(([k, l]) =>
+    `<button class="big ${S.sfilter === k ? "on" : ""} ${k === "input" && counts.input ? "alert" : ""}" data-f="${k}">${l} <span class="n">${counts[k]}</span></button>`).join("");
   const q = $("#sq").value.toLowerCase();
   const list = S.sessions.filter(s =>
-    (S.sfilter === "all" || stClass(s.state) === S.sfilter) && (!S.sdir || s.cwd === S.sdir) &&
+    (S.sfilter === "all" || stClass(s.state) === S.sfilter) &&
     (!q || [s.name, s.detail, s.intent, s.cwd, s.id, s.agent].join(" ").toLowerCase().includes(q)));
   $("#sessions").innerHTML = list.length ? list.map(s => {
     const c = stClass(s.state);
     return `<div class="card sess st-${c}" data-s="${esc(s.id)}">
-      <h3>${esc(s.name)} <span class="right pill st-${c} ${c === "working" && s.status === "active" ? "pulse" : ""}">${esc(s.state)}</span></h3>
+      <h3>${esc(s.name)} <span class="right pill st-${c} ${c === "working" && s.status === "active" ? "pulse" : ""}">${c === "input" ? "needs you" : esc(s.state)}</span></h3>
+      ${progressHTML(s)}
       <div class="detail">${esc(s.detail || "—")}</div>
       <div class="intent" title="${esc(s.intent)}">“${esc(s.intent)}”</div>
+      ${c === "input" && s.kind !== "interactive" && s.alive ? `<div style="margin:2px 0 10px"><button class="big primary" data-yes="${esc(s.id)}">✔ Yes / Go</button>${s.autoYes ? ` <span class="hint">auto-yes on</span>` : ""}</div>` : ""}
       <div class="meta">
+        ${s.autoYes ? `<span class="tag" style="color:var(--done)">auto-yes</span>` : ""}
         ${s.kind === "interactive" ? `<span class="tag" style="color:var(--input)">terminal</span>` : ""}
-        <span class="tag">${esc(s.agent || "claude")}</span>
         <span class="tag" title="${esc(s.cwd)}">${esc(shortPath(s.cwd).split("/").slice(-2).join("/"))}</span>
-        ${s.alive ? `<span class="tag" style="color:var(--done)">pid ${s.pid}</span>` : ""}
         <span>${fmtTok(s.tokens)} tok</span>
         <span class="right">${ago(s.updatedAt)}</span>
       </div></div>`;
-  }).join("") : `<div class="empty">No sessions match. <a href="#" id="emptyNew">Start one →</a></div>`;
+  }).join("") : `<div class="empty">Nothing here.</div>`;
 }
 
 // ---------- hub view
+const HUBF = [["all", "All", a => true], ["mine", "Mine", a => a.source === "user" || a.source === "project"],
+              ["plugin", "Plugins", a => a.source === "plugin"], ["built-in", "Built-in", a => a.source === "built-in"]];
 function renderHub() {
   $("#c-hub").textContent = S.agents.length || "";
-  const facetDefs = [];
-  const add = (key, label) => { if (!facetDefs.find(f => f.key === key)) facetDefs.push({ key, label, n: 0 }); facetDefs.find(f => f.key === key).n++; };
-  S.agents.forEach(a => { add("src:" + a.source, a.source); add("model:" + a.model, a.model); if (a.plugin) add("plugin:" + a.plugin, a.plugin); });
-  $("#facets").innerHTML = facetDefs.map(f => `<span class="chip ${S.facets.has(f.key) ? "on" : ""}" data-k="${esc(f.key)}">${esc(f.label)}<b>${f.n}</b></span>`).join("");
-
+  S.hubf ||= "all";
+  $("#facets").innerHTML = HUBF.map(([k, l, f]) =>
+    `<button class="big ${S.hubf === k ? "on" : ""}" data-k="${k}">${l} <span class="n">${S.agents.filter(f).length}</span></button>`).join("");
+  const pass = HUBF.find(h => h[0] === S.hubf)[2];
   const q = $("#aq").value.toLowerCase().trim();
-  const groups = {};
-  S.facets.forEach(k => { const [g] = k.split(":"); (groups[g] ||= []).push(k); });
-  const list = S.agents.filter(a => {
-    for (const ks of Object.values(groups))
-      if (!ks.some(k => k === "src:" + a.source || k === "model:" + a.model || k === "plugin:" + a.plugin)) return false;
-    return !q || q.split(/\s+/).every(w => [a.id, a.description, a.tools.join(" "), a.plugin, a.source, a.model].join(" ").toLowerCase().includes(w));
-  });
+  const list = S.agents.filter(a => pass(a) &&
+    (!q || q.split(/\s+/).every(w => [a.id, a.description, a.tools.join(" "), a.plugin, a.source, a.model, a.modelOverride].join(" ").toLowerCase().includes(w))));
   $("#agents").innerHTML = list.length ? list.map(a => `
     <div class="card" data-a="${esc(a.id)}">
       <h3>${avatar(a)}<span>${a.plugin ? `<span class="ns">${esc(a.plugin)}/</span>` : ""}${esc(a.name)}</span></h3>
@@ -277,8 +307,7 @@ function renderHub() {
       <div class="meta">
         <span class="tag src-${esc(a.source)}">${esc(a.source)}</span>
         <span class="tag model" title="${a.modelOverride ? "your default (agent file says " + esc(a.model) + ")" : "from agent file"}">${esc(a.modelOverride || a.model)}${a.modelOverride ? " ★" : ""}</span>
-        <span>${a.tools.length && a.tools[0] !== "*" ? a.tools.length + " tools" : "all tools"}</span>
-        <button class="btn sm right" data-launch="${esc(a.id)}">Launch</button>
+        <span class="right">${a.tools.length && a.tools[0] !== "*" ? a.tools.length + " tools" : "all tools"}</span>
       </div>
     </div>`).join("") : `<div class="empty">No agents match.</div>`;
 }
@@ -298,13 +327,20 @@ async function renderDrawer() {
     const c = stClass(s.state);
     $("#dhd").innerHTML = `<div><h2>${esc(s.name)}</h2><span class="pill st-${c}">${esc(s.state)}</span> <span class="hint mono">${esc(s.id)}</span></div>
       <button class="btn x" data-close>✕</button>`;
-    const tabs = s.kind === "interactive" ? ["overview"] : ["overview", "timeline", "logs"];
-    const head = `<div class="tabs">${tabs.map(t => `<button data-tab="${t}" class="${d.tab === t ? "on" : ""}">${t[0].toUpperCase() + t.slice(1)}</button>`).join("")}</div>`;
+    const tabs = s.kind === "interactive" ? ["overview"] : ["overview", "timeline"];
+    const acts = s.kind === "interactive"
+      ? `<button class="big" data-open="${esc(s.id)}">Go to terminal</button>`
+      : `<button class="big" data-open="${esc(s.id)}">Open</button>` + (s.alive
+        ? (c === "input" ? `<button class="big primary" data-yes="${esc(s.id)}">✔ Yes / Go</button>` : "") + `<button class="big danger" data-stop="${esc(s.id)}">Stop</button>` : "");
+    const head = `<div class="seg" style="margin-bottom:16px">${tabs.map(t => `<button data-tab="${t}" class="big ${d.tab === t ? "on" : ""}">${t[0].toUpperCase() + t.slice(1)}</button>`).join("")}<span class="grow"></span>${acts}</div>`;
     if (d.tab === "overview") {
-      $("#dbd").innerHTML = head + `<dl class="kv">
+      $("#dbd").innerHTML = head + progressHTML(s) + `<dl class="kv">
         <dt>${s.kind === "interactive" ? "Last reply" : "Now"}</dt><dd>${esc(s.detail || "—")}</dd>
         <dt>Asked</dt><dd style="word-break:normal">${esc(s.intent)}</dd>
         ${s.output ? `<dt>Output</dt><dd>${esc(typeof s.output === "string" ? s.output : JSON.stringify(s.output))}</dd>` : ""}
+        ${s.kind !== "interactive" ? `<dt>Auto-yes</dt><dd><label style="display:inline-flex;gap:8px;align-items:center;cursor:pointer">
+          <input type="checkbox" id="autoYes" data-auto="${esc(s.id)}" ${s.autoYes ? "checked" : ""}> answer “yes / go” for me when it's stuck 20s+ (max 10/hour; permission prompts get “yes, don't ask again”)</label></dd>
+` : ""}
         <dt>Kind</dt><dd>${esc(s.kind || "background")}${s.mode ? " · " + esc(s.mode) : ""}</dd>
         <dt>Agent</dt><dd>${esc(s.agent || "claude")}</dd>
         <dt>Folder</dt><dd class="mono">${esc(s.cwd)}</dd>
@@ -314,13 +350,7 @@ async function renderDrawer() {
         <dt>Updated</dt><dd>${esc(s.updatedAt || "")} (${ago(s.updatedAt)})</dd>
         <dt>CLI</dt><dd>${esc(s.cliVersion || "")}</dd>
       </dl>
-      <div style="display:flex;gap:8px;flex-wrap:wrap">
-        ${s.kind === "interactive" ? `<span class="hint">Interactive session in a terminal (pid ${esc(s.pid)}). Resume elsewhere with:</span>
-        <button class="btn" data-copy="cd ${esc(s.cwd)} && claude --resume ${esc(s.sessionId)}">Copy resume command</button>` : `
-        <button class="btn" data-copy="claude attach ${esc(s.id)}">Copy attach command</button>
-        <button class="btn" data-copy="claude logs ${esc(s.id)}">Copy logs command</button>
-        ${s.alive ? `<button class="btn danger" data-stop="${esc(s.id)}">Stop session</button>` : ""}`}
-      </div>`;
+      `;
     } else if (d.tab === "timeline") {
       $("#dbd").innerHTML = head + `<div class="hint">Loading…</div>`;
       const { timeline } = await api(`/api/sessions/${encodeURIComponent(s.id)}/timeline?limit=300`);
@@ -341,9 +371,9 @@ async function renderDrawer() {
     $("#dhd").innerHTML = `${avatar(a)}<div><h2>${a.plugin ? `<span class="hint">${esc(a.plugin)}/</span>` : ""}${esc(a.name)}</h2>
       <div class="meta"><span class="tag src-${esc(a.source)}">${esc(a.source)}</span><span class="tag model">${esc(a.model)}</span>
       ${a.maxTurns ? `<span class="tag">max ${esc(a.maxTurns)} turns</span>` : ""}</div></div>
-      <button class="btn primary x" data-launch="${esc(a.id)}">Launch</button><button class="btn" data-close>✕</button>`;
+      <button class="btn x" data-close>✕</button>`;
     const tabs = ["about", "prompt"];
-    $("#dbd").innerHTML = `<div class="tabs">${tabs.map(t => `<button data-tab="${t}" class="${d.tab === t ? "on" : ""}">${t === "about" ? "About" : "System prompt"}</button>`).join("")}</div>` +
+    $("#dbd").innerHTML = `<div class="seg" style="margin-bottom:16px">${tabs.map(t => `<button data-tab="${t}" class="big ${d.tab === t ? "on" : ""}">${t === "about" ? "About" : "Prompt"}</button>`).join("")}<span class="grow"></span><button class="big primary" data-launch="${esc(a.id)}">Launch</button></div>` +
       (d.tab === "about" ? `<p class="desc">${esc(a.description || "No description.")}</p>
         <div class="form" style="margin-bottom:16px"><label>Default model when you launch this agent
           <select id="modelSel" data-agent="${esc(a.id)}">
@@ -369,6 +399,12 @@ function modelOpts(agentId) {
     (pick && !MODELS.includes(pick) ? `<option selected>${esc(pick)}</option>` : "");
 }
 document.addEventListener("change", async e => {
+  if (e.target.id === "autoYes") {
+    const id = e.target.dataset.auto, on = e.target.checked;
+    try { await api(`/api/sessions/${encodeURIComponent(id)}/auto`, { on }); const x = S.sessions.find(z => z.id === id); if (x) x.autoYes = on;
+      toast(on ? "Auto-yes on for " + id : "Auto-yes off"); renderStatus(); } catch (err) { toast(err.message); }
+    return;
+  }
   if (e.target.id !== "modelSel") return;
   const agent = e.target.dataset.agent, model = e.target.value;
   try {
@@ -401,7 +437,8 @@ function chime() {
 const FAV = $("#fav").href;
 function badge(n) {
   document.title = n ? `(${n}) needs you · Overlook` : "Overlook";
-  const bar = $("#needbar"); bar.classList.toggle("on", n > 0); bar.textContent = `● ${n} need${n === 1 ? "s" : ""} you`;
+  $("#navStatus").classList.toggle("alert", n > 0);
+  $("#c-status").textContent = n ? `● ${n} need${n === 1 ? "s" : ""} you` : (S.sessions.filter(x => stClass(x.state) === "working").length || "");
   $("#fav").href = n ? FAV.replace("</svg>", "<circle cx='25' cy='7' r='6.5' fill='%23f2b84b' stroke='%23111214' stroke-width='1.5'/></svg>") : FAV;
 }
 function checkAlerts() {
@@ -438,7 +475,7 @@ function openLaunch(agentId) {
         ${["auto", "default", "acceptEdits", "plan", "bypassPermissions"].map(m => `<option ${m === (localStorage.ovMode || "auto") ? "selected" : ""}>${m}</option>`).join("")}</select></label>
     </div>
     <label>Model<select name="model">${modelOpts(agentId || "claude")}</select></label>
-    <div style="display:flex;gap:10px;align-items:center"><button class="btn primary" type="submit">Launch</button><span class="hint">⌘↵ to launch</span></div>
+    <div style="display:flex;gap:10px;align-items:center"><button class="big primary" type="submit">Launch</button><span class="hint">⌘↵ to launch</span></div>
   </form>`;
   const f = $("#lf");
   f.agent.addEventListener("change", () => { f.model.innerHTML = modelOpts(f.agent.value); });
@@ -460,24 +497,36 @@ function openLaunch(agentId) {
 // ---------- wiring
 function setView(v) {
   S.view = v;
-  document.querySelectorAll("nav button").forEach(b => b.classList.toggle("on", b.dataset.view === v));
+  document.querySelectorAll("[data-view]").forEach(b => b.classList.toggle("on", b.dataset.view === v));
   $("#v-status").hidden = v !== "status"; $("#v-hub").hidden = v !== "hub";
   location.hash = v;
 }
 document.addEventListener("click", async e => {
-  const t = e.target.closest("[data-view],[data-f],[data-d],[data-k],[data-s],[data-a],[data-launch],[data-close],[data-tab],[data-copy],[data-stop],#newBtn,#emptyNew,#scrim");
+  const t = e.target.closest("[data-view],[data-f],[data-d],[data-k],[data-s],[data-a],[data-launch],[data-close],[data-tab],[data-copy],[data-stop],[data-yes],[data-open],#newBtn,#emptyNew,#scrim");
   if (!t) return;
   if (t.dataset.launch) { e.stopPropagation(); return openLaunch(t.dataset.launch); }
   if (t.id === "newBtn" || t.id === "emptyNew") { e.preventDefault(); return openLaunch(); }
   if (t.id === "scrim" || t.dataset.close !== undefined) return closeDrawer();
   if (t.dataset.view) return setView(t.dataset.view);
-  if (t.dataset.f) { S.sfilter = S.sfilter === t.dataset.f && t.id === "needbar" ? "all" : t.dataset.f; setView("status"); return renderStatus(); }
-  if (t.dataset.d) { S.sdir = S.sdir === t.dataset.d ? null : t.dataset.d; return renderStatus(); }
-  if (t.dataset.k) { S.facets.has(t.dataset.k) ? S.facets.delete(t.dataset.k) : S.facets.add(t.dataset.k); return renderHub(); }
+  if (t.dataset.f) { S.sfilter = t.dataset.f; setView("status"); return renderStatus(); }
+  if (t.dataset.k) { S.hubf = t.dataset.k; return renderHub(); }
   if (t.dataset.s) return openDrawer("session", t.dataset.s);
   if (t.dataset.a) return openDrawer("agent", t.dataset.a);
   if (t.dataset.tab) { S.drawer.tab = t.dataset.tab; return renderDrawer(); }
-  if (t.dataset.copy) { await navigator.clipboard.writeText(t.dataset.copy); return toast("Copied: " + t.dataset.copy); }
+  if (t.dataset.copy) { e.preventDefault(); await navigator.clipboard.writeText(t.dataset.copy); return toast("Copied: " + t.dataset.copy); }
+  if (t.dataset.open) {
+    e.preventDefault(); e.stopPropagation();
+    try { const r = await api(`/api/sessions/${encodeURIComponent(t.dataset.open)}/open`, {}); toast(r.how); }
+    catch (err) { toast("Couldn't open: " + err.message, 6000); }
+    return;
+  }
+  if (t.dataset.yes) {
+    e.preventDefault(); e.stopPropagation();
+    t.disabled = true; const old = t.textContent; t.textContent = "Answering…";
+    try { const r = await api(`/api/sessions/${encodeURIComponent(t.dataset.yes)}/yes`, {}); toast(`Sent yes (${r.kind})`); setTimeout(refresh, 1500); }
+    catch (err) { toast("Couldn't answer: " + err.message, 7000); }
+    t.disabled = false; t.textContent = old; return;
+  }
   if (t.dataset.stop) {
     t.disabled = true; t.textContent = "Stopping…";
     try { await api(`/api/sessions/${encodeURIComponent(t.dataset.stop)}/stop`, {}); toast("Stopped"); refresh(); }

@@ -25,7 +25,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
-VERSION = "0.3.0"
+VERSION = "0.5.0"
 HOME = Path.home()
 WEB = Path(__file__).resolve().parent / "web"
 ID_RE = re.compile(r"^[A-Za-z0-9_-]{4,64}$")
@@ -42,6 +42,7 @@ def load_settings() -> dict:
     d = read_json(SETTINGS) if SETTINGS.exists() else None
     d = d if isinstance(d, dict) else {}
     d.setdefault("agentModels", {})
+    d.setdefault("autoYes", {})
     return d
 
 
@@ -96,6 +97,126 @@ def run_claude(args: list[str], timeout: float = 20, cwd: str | None = None) -> 
     except subprocess.TimeoutExpired:
         return 124, "timed out"
 
+
+
+# ------------------------------------------------------------------- progress
+
+FRAC_RE = re.compile(r"(?<![\d/])(\d[\d,]*)\s*/\s*(\d[\d,]*)(?![\d/])")
+PCT_RE = re.compile(r"(\d{1,3}(?:\.\d+)?)\s*%")
+ETA_CLOCK_RE = re.compile(
+    r"(?:ETA\s*[:~]?\s*~?\s*(\d{1,2}:\d{2})\s*(PT|PST|PDT|ET|UTC|Z)?)|"
+    r"(?:~?(\d{1,2}:\d{2})\s*(PT|PST|PDT|ET|UTC|Z)?\s*ETA)", re.I)
+ETA_DUR_RE = re.compile(r"(?:ETA|in|another|left|remaining)\s*~?\s*(\d+(?:\.\d+)?)\s*(h|hr|hrs|hours?|m|min|mins|minutes?)\b"
+                        r"|~?(\d+(?:\.\d+)?)\s*(h|hr|hrs|hours?|m|min|mins|minutes?)\s*(?:left|remaining|to go)", re.I)
+COUNT_RE = re.compile(r"(\d[\d,]*)\s*\(\+\s*(\d[\d,]*)\)")
+TZS = {"PT": "America/Los_Angeles", "PST": "America/Los_Angeles", "PDT": "America/Los_Angeles",
+       "ET": "America/New_York", "UTC": "UTC", "Z": "UTC"}
+
+
+def _num(x: str) -> float:
+    return float(x.replace(",", ""))
+
+
+def _clock_to_epoch(hhmm: str, tz: str | None, ref: float) -> float | None:
+    from datetime import datetime, timedelta
+    try:
+        from zoneinfo import ZoneInfo
+        zone = ZoneInfo(TZS.get((tz or "").upper(), "")) if tz else None
+    except Exception:
+        zone = None
+    h, m = map(int, hhmm.split(":"))
+    if h > 23 or m > 59:
+        return None
+    base = datetime.fromtimestamp(ref, zone) if zone else datetime.fromtimestamp(ref)
+    t = base.replace(hour=h, minute=m, second=0, microsecond=0)
+    # Statuses mention the NEXT occurrence; tolerate up to 3h of "overdue".
+    if t.timestamp() < ref - 3 * 3600:
+        t += timedelta(days=1)
+    return t.timestamp()
+
+
+def _iso_epoch(iso: str | None) -> float | None:
+    from datetime import datetime
+    if not iso:
+        return None
+    try:
+        return datetime.fromisoformat(iso.replace("Z", "+00:00")).timestamp()
+    except ValueError:
+        return None
+
+
+def parse_progress(text: str, said_at: float) -> dict:
+    """Pull counters and ETAs out of a free-text status line."""
+    out: dict = {}
+    if not text:
+        return out
+    for m in FRAC_RE.finditer(text):
+        num, den = _num(m.group(1)), _num(m.group(2))
+        tail = text[m.end():m.end() + 1]
+        # skip dates (11/06) and ratios that are not progress
+        if den > 1 and 0 <= num <= den and not (den <= 31 and num <= 12 and tail in "/-"):
+            out.update(num=num, den=den, pct=round(100 * num / den, 1))
+            break
+    if "pct" not in out:
+        m = PCT_RE.search(text)
+        if m and float(m.group(1)) <= 100:
+            out["pct"] = float(m.group(1))
+    m = COUNT_RE.search(text)
+    if m:
+        out.update(count=_num(m.group(1)), delta=_num(m.group(2)))
+    m = ETA_CLOCK_RE.search(text)
+    if m:
+        hhmm, tz = (m.group(1), m.group(2)) if m.group(1) else (m.group(3), m.group(4))
+        at = _clock_to_epoch(hhmm, tz, said_at)
+        if at:
+            out.update(etaAt=at, etaText=m.group(0).strip(), etaSource="stated")
+    else:
+        m = ETA_DUR_RE.search(text)
+        if m:
+            n, unit = (m.group(1), m.group(2)) if m.group(1) else (m.group(3), m.group(4))
+            secs = float(n) * (3600 if unit.lower().startswith("h") else 60)
+            out.update(etaAt=said_at + secs, etaText=m.group(0).strip(), etaSource="stated")
+    return out
+
+
+def estimate_rate(entries: list[tuple[float, str]], den: float) -> float | None:
+    """Items/sec from timeline samples that report the same denominator."""
+    pts = []
+    for at, text in entries:
+        p = parse_progress(text, at)
+        if p.get("den") == den and "num" in p:
+            pts.append((at, p["num"]))
+    if len(pts) < 2:
+        return None
+    pts.sort()
+    (t0, n0), (t1, n1) = pts[max(0, len(pts) - 8)], pts[-1]
+    if t1 - t0 < 60 or n1 <= n0:
+        return None
+    return (n1 - n0) / (t1 - t0)
+
+
+def progress_for(job_dir: Path | None, detail: str, updated_iso: str | None) -> dict:
+    said = _iso_epoch(updated_iso) or time.time()
+    p = parse_progress(detail, said)
+    if not p:
+        return p
+    p["saidAt"] = said
+    if "den" in p and job_dir and (job_dir / "timeline.jsonl").exists():
+        entries = []
+        for ln in (job_dir / "timeline.jsonl").read_text(errors="replace").splitlines()[-300:]:
+            try:
+                e = json.loads(ln)
+            except json.JSONDecodeError:
+                continue
+            at = _iso_epoch(e.get("at"))
+            if at and e.get("detail"):
+                entries.append((at, e["detail"]))
+        rate = estimate_rate(entries, p["den"])
+        if rate:
+            p["ratePerMin"] = round(rate * 60, 2)
+            if "etaAt" not in p:
+                p.update(etaAt=said + (p["den"] - p["num"]) / rate, etaSource="estimated")
+    return p
 
 # ------------------------------------------------------------------- sessions
 
@@ -273,6 +394,15 @@ def sessions() -> list[dict]:
                 "createdAt": _ms_iso(row.get("startedAt")), "updatedAt": _ms_iso(row.get("startedAt")),
                 "sessionId": row.get("sessionId"), "dir": None,
             }
+    auto = load_settings().get("autoYes", {})
+    for v in seen.values():
+        v["autoYes"] = bool(auto.get(v["id"]))
+        try:
+            v["progress"] = progress_for(Path(v["dir"]) if v.get("dir") else None,
+                                         v.get("detail") or "", v.get("updatedAt"))
+        except Exception as e:  # a weird status line must never break the board
+            log(f"progress parse failed for {v.get('id')}: {e!r}")
+            v["progress"] = {}
     return sorted(seen.values(), key=lambda s: s.get("updatedAt") or "", reverse=True)
 
 
@@ -477,6 +607,154 @@ def launch(body: dict) -> tuple[int, dict]:
                                           "output": out.strip()[-2000:]}
 
 
+
+# ------------------------------------------------------------------ yes / go
+# There is no `claude send`; `claude attach` opens the live terminal of a
+# background session, so we drive it in a pseudo-terminal: read the screen
+# with `claude logs`, press the right keys, then Ctrl+Z to detach (the session
+# keeps running).
+
+ANSI_RE = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]|\x1b\][^\x07]*\x07|\x1b[()][A-Z0-9]")
+YES_TEXT = os.environ.get("OVERLOOK_YES_TEXT", "yes, go ahead")
+_poke_locks: dict[str, threading.Lock] = {}
+_poke_log: dict[str, list[float]] = {}
+
+
+def screen_text(jid: str) -> str:
+    code, out = run_claude(["logs", jid], timeout=20)
+    t = ANSI_RE.sub("\n", out)
+    lines = [" ".join(l.split()) for l in t.splitlines() if l.strip()]
+    return "\n".join(lines[-60:])
+
+
+def yes_plan(screen: str) -> tuple[str, bytes]:
+    tail = screen[-2500:].lower()
+    if "don't ask again" in tail or "don\u2019t ask again" in tail:
+        return "permission", b"\x1b[B\r"         # option 2: yes, and don't ask again
+    if "enter to select" in tail or "enter to confirm" in tail:
+        return "menu", b"\r"                     # first (highlighted) option
+    return "text", YES_TEXT.encode() + b"\r"
+
+
+def poke(jid: str, reason: str = "button") -> dict:
+    import pty as _pty, select, signal
+    if not find_job_dir(jid):
+        return {"ok": False, "error": "only background sessions can be answered (terminal sessions can't be attached)"}
+    lock = _poke_locks.setdefault(jid, threading.Lock())
+    if not lock.acquire(blocking=False):
+        return {"ok": False, "error": "already answering this session"}
+    try:
+        kind, keys = yes_plan(screen_text(jid))
+        exe = claude_bin()
+        master, slave = _pty.openpty()
+        import fcntl, struct, termios
+        fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 50, 200, 0, 0))
+        env = claude_env(); env["TERM"] = "xterm-256color"
+        proc = subprocess.Popen([exe, "attach", jid], stdin=slave, stdout=slave, stderr=slave,
+                                env=env, start_new_session=True, close_fds=True)
+        os.close(slave)
+
+        def drain(sec):
+            end, n = time.time() + sec, 0
+            while time.time() < end:
+                r, _, _ = select.select([master], [], [], 0.2)
+                if r:
+                    try:
+                        n += len(os.read(master, 65536))
+                    except OSError:
+                        break
+            return n
+        rendered = drain(4)
+        # Text and Enter as separate writes: a single burst reads as a paste
+        # and the Enter lands inside the input instead of submitting it.
+        body, enter = (keys[:-1], keys[-1:]) if keys.endswith(b"\r") else (keys, b"")
+        if body:
+            os.write(master, body)
+            drain(0.6)
+        if enter:
+            os.write(master, enter)
+        drain(2.5)
+        os.write(master, b"\x1a")
+        drain(1)
+        for stop in (proc.terminate, proc.kill):
+            if proc.poll() is not None:
+                break
+            try:
+                stop()
+                proc.wait(timeout=2)
+            except (OSError, subprocess.TimeoutExpired):
+                pass
+        os.close(master)
+        _poke_log.setdefault(jid, []).append(time.time())
+        log(f"yes -> {jid} ({kind}, {reason}, rendered {rendered}B)")
+        _live_cache["at"] = 0
+        return {"ok": rendered > 0, "kind": kind}
+    finally:
+        lock.release()
+
+
+def auto_yes_loop():
+    while True:
+        time.sleep(20)
+        try:
+            on = {k for k, v in load_settings().get("autoYes", {}).items() if v}
+            if not on:
+                continue
+            for s_ in sessions():
+                jid = s_["id"]
+                if jid not in on or not s_.get("alive") or s_.get("kind") != "background":
+                    continue
+                if not re.search(r"block|input|wait|question|permission", (s_.get("state") or "").lower()):
+                    continue
+                if time.time() - (_iso_epoch(s_.get("updatedAt")) or 0) < 20:
+                    continue
+                recent = [t for t in _poke_log.get(jid, []) if time.time() - t < 3600]
+                if (recent and time.time() - recent[-1] < 90) or len(recent) >= 10:
+                    continue
+                threading.Thread(target=poke, args=(jid, "auto"), daemon=True).start()
+        except Exception as e:
+            log(f"auto-yes loop error: {e!r}")
+
+
+# ---------------------------------------------------------- open (one click)
+
+
+def _terminal_app() -> str:
+    want = os.environ.get("OVERLOOK_TERMINAL")
+    if want:
+        return want
+    for app in ("Ghostty", "iTerm", "Terminal"):
+        if Path(f"/Applications/{app}.app").exists():
+            return app
+    return "Terminal"
+
+
+def open_session(jid: str) -> dict:
+    """Background session: new terminal window attached to it.
+    Interactive session: bring the terminal app forward."""
+    app = _terminal_app()
+    s_ = next((x for x in sessions() if x["id"] == jid), None)
+    if not s_:
+        return {"ok": False, "error": "no such session"}
+    if s_.get("kind") == "interactive":
+        subprocess.run(["open", "-a", app], timeout=10)
+        return {"ok": True, "how": f"focused {app}"}
+    exe = claude_bin() or "claude"
+    cfg = claude_env().get("CLAUDE_CONFIG_DIR", "")
+    cwd = s_.get("cwd") or str(HOME)
+    q = lambda v: "'" + str(v).replace("'", "'\\''") + "'"
+    cmd = f"cd {q(cwd)}; " + (f"export CLAUDE_CONFIG_DIR={q(cfg)}; " if cfg else "") + f"{q(exe)} attach {q(jid)}; exec $SHELL -l"
+    if app == "Ghostty":
+        subprocess.Popen(["open", "-na", "Ghostty", "--args", "-e", "/bin/zsh", "-lc", cmd])
+    elif app == "iTerm":
+        script = f'tell application "iTerm" to create window with default profile command "/bin/zsh -lc " & quoted form of {json.dumps(cmd)}'
+        subprocess.Popen(["osascript", "-e", script, "-e", 'tell application "iTerm" to activate'])
+    else:
+        subprocess.Popen(["osascript", "-e", f'tell application "Terminal" to do script {json.dumps(cmd)}',
+                          "-e", 'tell application "Terminal" to activate'])
+    log(f"open {jid} in {app}")
+    return {"ok": True, "how": f"attached in {app}"}
+
 # ----------------------------------------------------------------------- http
 
 
@@ -568,6 +846,22 @@ class Handler(BaseHTTPRequestHandler):
                 save_settings(st)
             log(f"model for {agent} -> {model or 'agent default'}")
             return self._send(200, {"ok": True, "settings": st})
+        m = re.match(r"^/api/sessions/([^/]+)/open$", p)
+        if m and ID_RE.match(m.group(1)):
+            res = open_session(m.group(1))
+            return self._send(200 if res.get("ok") else 404, res)
+        m = re.match(r"^/api/sessions/([^/]+)/(yes|auto)$", p)
+        if m and ID_RE.match(m.group(1)):
+            jid, what = m.groups()
+            if what == "yes":
+                res = poke(jid)
+                return self._send(200 if res.get("ok") else 409, res)
+            with _settings_lock:
+                st = load_settings()
+                st["autoYes"][jid] = bool(body.get("on"))
+                save_settings(st)
+            log(f"auto-yes {jid} -> {bool(body.get('on'))}")
+            return self._send(200, {"ok": True, "on": bool(body.get("on"))})
         m = re.match(r"^/api/sessions/([^/]+)/stop$", p)
         if m and ID_RE.match(m.group(1)):
             log(f"stop {m.group(1)}")
@@ -587,6 +881,7 @@ def main():
     log(f"Overlook {VERSION} at {url}")
     log(f"config dirs: {', '.join(str(d) for d in config_dirs()) or 'none found'}")
     log(f"claude: {claude_bin() or 'NOT FOUND'}")
+    threading.Thread(target=auto_yes_loop, daemon=True).start()
     if a.open:
         threading.Timer(0.5, lambda: webbrowser.open(url)).start()
     try:
