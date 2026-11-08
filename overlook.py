@@ -50,6 +50,7 @@ def load_settings() -> dict:
     d = d if isinstance(d, dict) else {}
     d.setdefault("agentModels", {})
     d.setdefault("autoYes", {})
+    d.setdefault("names", {})   # session id -> display name set from the dashboard
     return d
 
 
@@ -409,9 +410,12 @@ def sessions() -> list[dict]:
                 "createdAt": _ms_iso(row.get("startedAt")), "updatedAt": _ms_iso(row.get("startedAt")),
                 "sessionId": row.get("sessionId"), "dir": None,
             }
-    auto = load_settings().get("autoYes", {})
+    st_ = load_settings()
+    auto, names = st_.get("autoYes", {}), st_.get("names", {})
     for v in seen.values():
         v["autoYes"] = bool(auto.get(v["id"]))
+        if names.get(v["id"]):
+            v["name"], v["renamed"] = names[v["id"]], True
         try:
             v["progress"] = progress_for(Path(v["dir"]) if v.get("dir") else None,
                                          v.get("detail") or "", v.get("updatedAt"))
@@ -1038,6 +1042,19 @@ class Handler(BaseHTTPRequestHandler):
                 save_settings(st)
             log(f"auto-yes {jid} -> {bool(body.get('on'))}")
             return self._send(200, {"ok": True, "on": bool(body.get("on"))})
+        m = re.match(r"^/api/sessions/([^/]+)/rename$", p)
+        if m and ID_RE.match(m.group(1)):
+            # The CLI has no rename; the name is an Overlook-side override. Empty clears it.
+            name = " ".join(str(body.get("name") or "").split())[:80]
+            with _settings_lock:
+                st = load_settings()
+                if name:
+                    st["names"][m.group(1)] = name
+                else:
+                    st["names"].pop(m.group(1), None)
+                save_settings(st)
+            log(f"rename {m.group(1)} -> {name!r}")
+            return self._send(200, {"ok": True, "name": name})
         m = re.match(r"^/api/sessions/([^/]+)/wrap$", p)
         if m and ID_RE.match(m.group(1)):
             res = poke(m.group(1), "wrap", text=WRAP_TEXT)

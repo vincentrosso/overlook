@@ -56,6 +56,10 @@ kbd { font: 11px var(--mono); color: var(--faint); border: 1px solid var(--line)
 .card:hover { border-color: #3d424d; transform: translateY(-1px); }
 .card h3 { margin: 0; font-size: 14.5px; font-weight: 650; display: flex; align-items: center; gap: 8px; }
 .card h3 .ns { color: var(--faint); font-weight: 500; }
+.card h3 .ren { border: 0; background: none; color: var(--faint); cursor: pointer; padding: 0 2px; font-size: 13px; opacity: 0; }
+.card:hover h3 .ren { opacity: 1; }
+.card h3 .ren:hover { color: var(--ink); }
+.card h3 input.rename { font: inherit; background: var(--panel2); color: var(--ink); border: 1px solid var(--accent); border-radius: 6px; padding: 2px 6px; min-width: 0; flex: 1; }
 .card p { margin: 6px 0 10px; color: var(--dim); font-size: 13px; display: -webkit-box;
   -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; min-height: 3.9em; }
 .meta { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; font-size: 11.5px; color: var(--faint); }
@@ -134,7 +138,8 @@ kbd { font: 11px var(--mono); color: var(--faint); border: 1px solid var(--line)
 .drawer .x { margin-left: auto; }
 .drawer.wide { width: min(1180px, 97vw); }
 #termbox { height: calc(100vh - 170px); min-height: 320px; background: #0b0d11; border: 1px solid var(--line); border-radius: 10px; padding: 8px; }
-#termbox .xt { height: 100%; }
+#termbox { display: flex; flex-direction: column; }
+#termbox .xt { height: var(--term-h, 54%); }   /* Claude's input box is at the bottom of its screen; a half-height screen puts it mid-panel */
 .termbar { display: flex; gap: 10px; align-items: center; margin-top: 10px; }
 .tabs { display: flex; gap: 2px; border-bottom: 1px solid var(--line); margin: -4px 0 14px; }
 .tabs button { border: 0; background: none; padding: 8px 12px; cursor: pointer; color: var(--dim); border-bottom: 2px solid transparent; }
@@ -280,7 +285,7 @@ function renderStatus() {
   $("#sessions").innerHTML = list.length ? list.map(s => {
     const c = stClass(s.state);
     return `<div class="card sess st-${c}" data-s="${esc(s.id)}">
-      <h3>${esc(s.name)} <span class="right pill st-${c} ${c === "working" && s.status === "active" ? "pulse" : ""}">${c === "input" ? "needs you" : esc(s.state)}</span></h3>
+      <h3><span class="nm">${esc(s.name)}</span><button class="ren" data-rename="${esc(s.id)}" title="Rename">✎</button> <span class="right pill st-${c} ${c === "working" && s.status === "active" ? "pulse" : ""}">${c === "input" ? "needs you" : esc(s.state)}</span></h3>
       ${progressHTML(s)}
       <div class="detail">${esc(s.detail || "—")}</div>
       <div class="intent" title="${esc(s.intent)}">“${esc(s.intent)}”</div>
@@ -329,6 +334,13 @@ function closeDrawer() { S.drawer = null; $("#scrim").classList.remove("on"); $(
 
 // ---- in-page terminal: xterm.js <-> /ws/term/<id> (a pty running `claude attach`)
 let TERM = null;
+function termWrap() {
+  if (!TERM || TERM.ws.readyState !== 1) { toast("Terminal isn't connected — use the card's ⏏ Wrap or ↻ Reconnect", 6000); return; }
+  const ws = TERM.ws;
+  ws.send(JSON.stringify({ input: "/wrape " }));
+  setTimeout(() => { if (ws.readyState === 1) ws.send(JSON.stringify({ input: "\r" })); }, 400);
+  toast("Sent /wrape — it will wrap up, then exit"); setTimeout(refresh, 2500);
+}
 function killTerm() {
   if (!TERM) return;
   try { TERM.ro.disconnect(); TERM.ws.close(); TERM.term.dispose(); } catch (_) {}
@@ -348,6 +360,10 @@ function mountTerm(id, fresh = false) {
   ws.onmessage = e => { if (e.data instanceof ArrayBuffer) term.write(new Uint8Array(e.data)); };
   ws.onclose = () => { term.write("\r\n\x1b[2m[detached — Reconnect to attach again; the agent is still running]\x1b[0m\r\n"); const h = $("#termhint"); if (h) h.textContent = "Detached."; };
   ws.onerror = () => toast("Terminal connection failed", 5000);
+  term.attachCustomKeyEventHandler(ev => {
+    if (ev.type === "keydown" && ev.ctrlKey && ev.shiftKey && !ev.metaKey && !ev.altKey && ev.code === "KeyW") { ev.preventDefault(); termWrap(); return false; }
+    return true;
+  });
   term.onData(d => { if (ws.readyState === 1) ws.send(JSON.stringify({ input: d })); });
   term.onResize(({ cols, rows }) => { if (ws.readyState === 1) ws.send(JSON.stringify({ resize: [cols, rows] })); });
   const ro = new ResizeObserver(() => { try { fit.fit(); } catch (_) {} }); ro.observe(el);
@@ -369,7 +385,7 @@ async function renderDrawer() {
         ? (c === "input" ? `<button class="big primary" data-yes="${esc(s.id)}">✔ Yes / Go</button>` : "") + `<button class="big" data-wrap="${esc(s.id)}" title="Send /wrape: update CLAUDE.md, notes and memory, then exit the session">⏏ Wrap</button><button class="big danger" data-stop="${esc(s.id)}">Stop</button>` : "");
     const head = `<div class="seg" style="margin-bottom:16px">${tabs.map(t => `<button data-tab="${t}" class="big ${d.tab === t ? "on" : ""}">${t[0].toUpperCase() + t.slice(1)}</button>`).join("")}<span class="grow"></span>${acts}</div>`;
     if (d.tab === "terminal") {
-      $("#dbd").innerHTML = head + `<div id="termbox"></div><div class="termbar"><span class="hint" id="termhint">Live. Type here as you would in a terminal; Ctrl+Z detaches, the agent keeps running.</span><span class="grow"></span><button class="btn" data-reterm="${esc(s.id)}">↻ Reconnect</button></div>`;
+      $("#dbd").innerHTML = head + `<div id="termbox"></div><div class="termbar"><span class="hint" id="termhint">Live. Type here as you would in a terminal; Ctrl+Z detaches, the agent keeps running. Ctrl+Shift+W wraps up and exits.</span><span class="grow"></span><button class="btn" data-termwrap title="Type /wrape into this terminal: wrap up, then exit (Ctrl+Shift+W)">⏏ Wrap &amp; exit</button><button class="btn" data-reterm="${esc(s.id)}">↻ Reconnect</button></div>`;
       mountTerm(s.id);
     } else if (d.tab === "overview") {
       $("#dbd").innerHTML = head + progressHTML(s) + `<dl class="kv">
@@ -540,7 +556,7 @@ function setView(v) {
   location.hash = v;
 }
 document.addEventListener("click", async e => {
-  const t = e.target.closest("[data-view],[data-f],[data-d],[data-k],[data-s],[data-a],[data-launch],[data-close],[data-tab],[data-copy],[data-stop],[data-yes],[data-wrap],[data-open],[data-reterm],#newBtn,#emptyNew,#scrim");
+  const t = e.target.closest("[data-view],[data-f],[data-d],[data-k],[data-s],[data-a],[data-launch],[data-close],[data-tab],[data-copy],[data-stop],[data-yes],[data-wrap],[data-rename],[data-termwrap],[data-open],[data-reterm],#newBtn,#emptyNew,#scrim");
   if (!t) return;
   if (t.dataset.launch) { e.stopPropagation(); return openLaunch(t.dataset.launch); }
   if (t.id === "newBtn" || t.id === "emptyNew") { e.preventDefault(); return openLaunch(); }
@@ -565,6 +581,24 @@ document.addEventListener("click", async e => {
     try { const r = await api(`/api/sessions/${encodeURIComponent(t.dataset.yes)}/yes`, {}); toast(`Sent yes (${r.kind})`); setTimeout(refresh, 1500); }
     catch (err) { toast("Couldn't answer: " + err.message, 7000); }
     t.disabled = false; t.textContent = old; return;
+  }
+  if ("termwrap" in t.dataset) { e.preventDefault(); termWrap(); return; }
+  if (t.dataset.rename) {
+    e.preventDefault(); e.stopPropagation();
+    const id = t.dataset.rename, h3 = t.closest("h3"), nm = h3.querySelector(".nm");
+    const inp = document.createElement("input"); inp.className = "rename"; inp.value = nm.textContent; inp.maxLength = 80;
+    inp.addEventListener("click", ev => ev.stopPropagation());
+    const done = async (save) => {
+      if (!inp.isConnected) return;
+      const v = inp.value.trim();
+      inp.replaceWith(nm);
+      if (!save || v === nm.textContent) return;
+      try { await api(`/api/sessions/${encodeURIComponent(id)}/rename`, { name: v }); toast(v ? "Renamed" : "Name cleared"); refresh(); }
+      catch (err) { toast("Rename failed: " + err.message, 6000); }
+    };
+    inp.addEventListener("keydown", ev => { if (ev.key === "Enter") done(true); else if (ev.key === "Escape") done(false); });
+    inp.addEventListener("blur", () => done(true));
+    nm.replaceWith(inp); inp.focus(); inp.select(); return;
   }
   if (t.dataset.wrap) {
     e.preventDefault(); e.stopPropagation();

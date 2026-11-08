@@ -34,6 +34,15 @@ Config dir here is `~/.claude-home`, not `~/.claude`.
   typed command, not the highlighted suggestion. Overlook does NOT stop the job: `/wrape`'s
   own last step is `claude stop` on itself, after the wrap report is written. Refused (409)
   when `yes_plan` sees a permission/menu prompt, because the keys would land in the picker.
+- **Rename (`POST /api/sessions/<id>/rename`, v0.7):** `settings.names[id]` overrides `name` in
+  `sessions()` (`renamed: true`). Not pushed into the CLI: `state.json` is daemon-owned and
+  `/rename` via pty would cost an attach per edit.
+- **Wrap & exit on the term tab (v0.7):** `termWrap()` writes `/wrape ` then, 400ms later, `\r`
+  over the live websocket (no second attach). Bound to Ctrl+Shift+W via
+  `attachCustomKeyEventHandler`; Cmd+Shift+W is Chrome's close-window, so not that.
+- **Terminal input mid-panel (v0.7):** `.xt` is `--term-h` (54%) of `#termbox`, top-anchored.
+  Claude draws its input box at the bottom of its screen, so a half-height screen puts the
+  typing line at the middle of the panel. The lower half is deliberately empty.
 - **Auto-yes:** opt-in per session, stuck 20s+, 90s between answers, max 10/hour.
   It accepts permission prompts with "don't ask again", so treat it as a real risk surface.
 - **Progress:** `parse_progress` regexes the status line for fractions, percent, ETAs and
