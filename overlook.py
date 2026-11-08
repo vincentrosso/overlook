@@ -32,7 +32,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
-VERSION = "0.7.3"
+VERSION = "0.7.4"
 HOME = Path.home()
 WEB = Path(__file__).resolve().parent / "web"
 ID_RE = re.compile(r"^[A-Za-z0-9_-]{4,64}$")
@@ -846,6 +846,34 @@ def window_slot(jid: str, st: dict) -> tuple[int, int, int, int] | None:
     return (x0 + (i % cols) * cw, y0 + (i // cols) * ch, cw, ch)
 
 
+def _ghostty_pids() -> set[int]:
+    out = subprocess.run(["pgrep", "-f", "Ghostty.app/Contents/MacOS/ghostty"], capture_output=True, text=True).stdout
+    return {int(p) for p in out.split()}
+
+
+def _place_new_ghostty(before: set[int], slot: tuple[int, int, int, int]) -> None:
+    """Wait for the ghostty process `open -na` spawned, then move/resize its window into the slot."""
+    x, y, w, h = slot
+    pid = None
+    for _ in range(40):                       # up to ~8s for the process, then its window
+        time.sleep(0.2)
+        new = _ghostty_pids() - before
+        if new:
+            pid = min(new)
+            break
+    if pid is None:
+        log("ghostty place: no new process"); return
+    for _ in range(25):
+        r = subprocess.run(["osascript",
+                            "-e", f'tell application "System Events" to tell (first process whose unix id is {pid}) to set position of window 1 to {{{x}, {y}}}',
+                            "-e", f'tell application "System Events" to tell (first process whose unix id is {pid}) to set size of window 1 to {{{w}, {h}}}'],
+                           capture_output=True, text=True, timeout=10)
+        if r.returncode == 0:
+            return
+        time.sleep(0.2)
+    log(f"ghostty place: gave up on pid {pid}: {r.stderr.strip()[-120:]}")
+
+
 def _terminal_app() -> str:
     want = os.environ.get("OVERLOOK_TERMINAL")
     if want:
@@ -883,12 +911,15 @@ def open_session(jid: str) -> dict:
              f"printf '\\e]6;1;bg;red;brightness;{r}\\a\\e]6;1;bg;green;brightness;{g}\\a\\e]6;1;bg;blue;brightness;{b}\\a'; ")
     cmd = f"cd {q(cwd)}; " + (f"export CLAUDE_CONFIG_DIR={q(cfg)}; " if cfg else "") + paint + f"{q(exe)} attach {q(jid)}; exec $SHELL -l"
     if app == "Ghostty":
-        args = [f"--title={title}", f"--background={bg}", f"--unfocused-split-fill={bg}"]
+        # Each `open -na Ghostty` is its own process, so the new window is "window 1 of the process
+        # whose unix id is <new pid>". Ghostty honours --title/--background but IGNORES
+        # --window-position-*/--window-width/height for these launches (verified 1.4.0), so the
+        # window is placed afterwards through System Events.
+        before = _ghostty_pids()
+        subprocess.Popen(["open", "-na", "Ghostty", "--args", f"--title={title}", f"--background={bg}",
+                          f"--unfocused-split-fill={bg}", "-e", "/bin/zsh", "-lc", cmd])
         if slot:
-            x, y, w, h = slot
-            args += [f"--window-position-x={x}", f"--window-position-y={y}",
-                     f"--window-width={max(60, (w - 40) // 10)}", f"--window-height={max(20, (h - 80) // 21)}"]
-        subprocess.Popen(["open", "-na", "Ghostty", "--args", *args, "-e", "/bin/zsh", "-lc", cmd])
+            threading.Thread(target=_place_new_ghostty, args=(before, slot), daemon=True).start()
     elif app == "iTerm":
         script = [f'tell application "iTerm" to create window with default profile command "/bin/zsh -lc " & quoted form of {json.dumps(cmd)}']
         if slot:
