@@ -332,12 +332,26 @@ function renderHub() {
 }
 
 // ---------- drawer
-function openDrawer(kind, id) {
-  S.drawer = { kind, id, tab: kind === "session" ? "terminal" : "about" };
+function openDrawer(kind, id, tab = null) {
+  S.drawer = { kind, id, tab: tab || (kind === "session" ? "terminal" : "about") };
   $("#scrim").classList.add("on"); $("#drawer").classList.add("on");
-  renderDrawer();
+  renderDrawer(); syncHash();
 }
-function closeDrawer() { S.drawer = null; $("#scrim").classList.remove("on"); $("#drawer").classList.remove("on", "wide"); }
+function closeDrawer() { S.drawer = null; $("#scrim").classList.remove("on"); $("#drawer").classList.remove("on", "wide"); syncHash(); }
+// URL = state: #status | #hub | #s/<session id>/<tab> | #a/<agent id>, so a session's terminal has a link you can bookmark or reload.
+function syncHash() {
+  const d = S.drawer;
+  const h = d ? (d.kind === "session" ? `#s/${encodeURIComponent(d.id)}/${d.tab}` : `#a/${encodeURIComponent(d.id)}`) : "#" + S.view;
+  if (location.hash !== h) history.replaceState(null, "", h);
+}
+function openFromHash() {
+  const m = location.hash.match(/^#(s|a)\/([^/]+)(?:\/(\w+))?$/);
+  if (!m) return false;
+  const id = decodeURIComponent(m[2]);
+  if (m[1] === "s") { if (!S.sessions.find(x => x.id === id)) return false; setView("status"); openDrawer("session", id, m[3] || "terminal"); }
+  else { setView("hub"); openDrawer("agent", id); }
+  return true;
+}
 
 // ---- in-page terminal: xterm.js <-> /ws/term/<id> (a pty running `claude attach`)
 let TERM = null;
@@ -595,7 +609,7 @@ function setView(v) {
   S.view = v;
   document.querySelectorAll("[data-view]").forEach(b => b.classList.toggle("on", b.dataset.view === v));
   $("#v-status").hidden = v !== "status"; $("#v-hub").hidden = v !== "hub";
-  location.hash = v;
+  if (!S.drawer) history.replaceState(null, "", "#" + v);
 }
 document.addEventListener("click", async e => {
   const t = e.target.closest("[data-view],[data-f],[data-d],[data-k],[data-s],[data-a],[data-launch],[data-close],[data-tab],[data-copy],[data-stop],[data-yes],[data-wrap],[data-rename],[data-termwrap],[data-termexit],[data-color],[data-closesess],[data-open],[data-reterm],#newBtn,#emptyNew,#scrim");
@@ -608,7 +622,7 @@ document.addEventListener("click", async e => {
   if (t.dataset.k) { S.hubf = t.dataset.k; return renderHub(); }
   if (t.dataset.s) return openDrawer("session", t.dataset.s);
   if (t.dataset.a) return openDrawer("agent", t.dataset.a);
-  if (t.dataset.tab) { S.drawer.tab = t.dataset.tab; return renderDrawer(); }
+  if (t.dataset.tab) { S.drawer.tab = t.dataset.tab; renderDrawer(); syncHash(); return; }
   if (t.dataset.reterm) { e.preventDefault(); return mountTerm(t.dataset.reterm, true); }
   if (t.dataset.copy) { e.preventDefault(); await navigator.clipboard.writeText(t.dataset.copy); return toast("Copied: " + t.dataset.copy); }
   if (t.dataset.open) {
@@ -700,7 +714,8 @@ async function refresh() {
   } catch (e) { $("#refreshed").textContent = "⚠ server unreachable"; }
 }
 (async function init() {
-  setView(location.hash === "#hub" ? "hub" : "status");
+  const startHash = location.hash;
+  setView(startHash === "#hub" || startHash.startsWith("#a/") ? "hub" : "status");
   const info = await api("/api/info").catch(() => ({}));
   $("#ver").textContent = info.version ? "v" + info.version : "";
   if (info.models) MODELS = info.models;
@@ -708,6 +723,8 @@ async function refresh() {
   await refresh();
   const [{ agents }, { dirs }] = await Promise.all([api("/api/agents"), api("/api/dirs")]);
   S.agents = agents; S.dirs = dirs; renderHub();
+  location.hash = startHash; openFromHash();
+  window.addEventListener("hashchange", () => { if (!openFromHash() && !location.hash.startsWith("#s/") && !location.hash.startsWith("#a/")) { closeDrawer(); setView(location.hash === "#hub" ? "hub" : "status"); } });
   setInterval(() => { if (!document.hidden) refresh(); }, 4000);
 })();
 </script>

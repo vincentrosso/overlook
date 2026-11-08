@@ -49,9 +49,12 @@ permission mode and an optional model override.
   detaches (the agent keeps running); ↻ Reconnect attaches again. **⏏ Wrap**
   (or Ctrl+Shift+W inside the terminal) types `/wrape` into it; **⏻ Exit** does
   that and then, once the session has exited, Closes it and removes the card.
+- Every view has a URL: `#status`, `#hub`, and `#s/<session id>/terminal` for a
+  session's terminal, so you can bookmark or reload straight into one.
 - **↗ App** (card and drawer) puts the same session in a new terminal window instead (Ghostty,
   iTerm or Terminal; override with `OVERLOOK_TERMINAL`). Windows are **tiled**
-  into a 2×2 grid (3×2 on wide screens), each session keeping its cell, and
+  into a 2×2 grid (3×2 on wide screens), each session keeping its cell, one
+  window per session (a second click brings it forward), and
   **colour-coded**: the dot on the card, the Terminal tab and the real window's
   title + background all share one colour per session. Click the dot to change it.
 - `python3 overlook.py --app` opens the dashboard as its own window (Chrome

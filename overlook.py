@@ -32,7 +32,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
-VERSION = "0.7.5"
+VERSION = "0.7.6"
 HOME = Path.home()
 WEB = Path(__file__).resolve().parent / "web"
 ID_RE = re.compile(r"^[A-Za-z0-9_-]{4,64}$")
@@ -851,28 +851,48 @@ def _ghostty_pids() -> set[int]:
     return {int(p) for p in out.split()}
 
 
-def _place_new_ghostty(before: set[int], slot: tuple[int, int, int, int]) -> None:
-    """Wait for the ghostty process `open -na` spawned, then move/resize its window into the slot."""
-    x, y, w, h = slot
+_term_windows: dict[str, int] = {}   # session id -> pid of the ghostty process showing it (↗ App reuses it)
+
+
+def _se(pid: int, *stmts: str) -> subprocess.CompletedProcess:
+    """Run System Events statements against the process with this unix id. One -e per statement,
+    each a complete one-liner: AppleScript mis-parses a block body after `tell X to tell Y`."""
+    pre = f'tell application "System Events" to tell (first process whose unix id is {pid}) to '
+    args = []
+    for st in stmts:
+        args += ["-e", pre + st]
+    return subprocess.run(["osascript", *args], capture_output=True, text=True, timeout=15)
+
+
+WIN = '(first window whose subrole is "AXStandardWindow")'   # not Ghostty's transient 84x77 startup window
+
+
+def _focus_ghostty(pid: int) -> bool:
+    r = _se(pid, "set frontmost to true", f'perform action "AXRaise" of {WIN}')
+    return r.returncode == 0
+
+
+def _track_new_ghostty(jid: str, before: set[int], slot: tuple[int, int, int, int] | None) -> None:
+    """Find the ghostty process `open -na` spawned, remember it for this session, and (if a slot
+    was given) move/resize its window into the slot. Ghostty re-applies its default size just after
+    the window appears, so the set is repeated until a read-back agrees."""
     pid = None
-    for _ in range(40):                       # up to ~8s for the process, then its window
+    for _ in range(40):                       # up to ~8s for the process to show up
         time.sleep(0.2)
         new = _ghostty_pids() - before
         if new:
             pid = min(new)
             break
     if pid is None:
-        log("ghostty place: no new process"); return
-    # Only the real terminal window (Ghostty also shows a transient 84x77 window at startup), and
-    # verify: Ghostty re-applies its default size just after the window appears, so one set is
-    # not enough -- keep setting until a read-back agrees.
-    js = (f'tell application "System Events" to tell (first process whose unix id is {pid})\n'
-          f'  set w to first window whose subrole is "AXStandardWindow"\n'
-          f'  set position of w to {{{x}, {y}}}\n  set size of w to {{{w}, {h}}}\n'
-          f'  delay 0.3\n  return (position of w) & (size of w)\nend tell')
+        log("ghostty: no new process"); return
+    _term_windows[jid] = pid
+    if not slot:
+        return
+    x, y, w, h = slot
     r = None
     for _ in range(25):
-        r = subprocess.run(["osascript", "-e", js], capture_output=True, text=True, timeout=15)
+        r = _se(pid, f"set position of {WIN} to {{{x}, {y}}}", f"set size of {WIN} to {{{w}, {h}}}",
+                "delay 0.3", f"get (position of {WIN}) & (size of {WIN})")
         if r.returncode == 0:
             try:
                 got = [int(v) for v in r.stdout.strip().split(", ")]
@@ -925,11 +945,16 @@ def open_session(jid: str) -> dict:
         # whose unix id is <new pid>". Ghostty honours --title/--background but IGNORES
         # --window-position-*/--window-width/height for these launches (verified 1.4.0), so the
         # window is placed afterwards through System Events.
+        # One window per session: if the one we opened earlier is still there, bring it forward.
+        pid = _term_windows.get(jid)
+        if pid and pid in _ghostty_pids() and _focus_ghostty(pid):
+            log(f"open {jid}: focused existing Ghostty window (pid {pid})")
+            return {"ok": True, "how": "focused its Ghostty window", "color": color}
+        _term_windows.pop(jid, None)
         before = _ghostty_pids()
         subprocess.Popen(["open", "-na", "Ghostty", "--args", f"--title={title}", f"--background={bg}",
                           f"--unfocused-split-fill={bg}", "-e", "/bin/zsh", "-lc", cmd])
-        if slot:
-            threading.Thread(target=_place_new_ghostty, args=(before, slot), daemon=True).start()
+        threading.Thread(target=_track_new_ghostty, args=(jid, before, slot), daemon=True).start()
     elif app == "iTerm":
         script = [f'tell application "iTerm" to create window with default profile command "/bin/zsh -lc " & quoted form of {json.dumps(cmd)}']
         if slot:
