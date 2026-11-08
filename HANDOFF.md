@@ -1,7 +1,7 @@
 # Overlook handoff
 
 Local web dashboard for Claude Code agents, built as a Conductor replacement.
-v0.7.7, branch `main`, public repo `vincentrosso/overlook`.
+v0.7.8, branch `main`, public repo `vincentrosso/overlook`.
 
 ## Layout
 
@@ -60,8 +60,11 @@ Config dir here is `~/.claude-home`, not `~/.claude`.
   else `/wrap`), puts the id in `EXITING`, and `refresh()` calls `finishExit` → `/close` the first
   time it sees the session not alive. A 5s interval keeps polling while anything is exiting, since
   the normal 4s refresh pauses when the tab is hidden. Lost on page reload (it's a JS map).
-- **Close (`POST /api/sessions/<id>/close`, v0.7):** `claude rm <id>` (works on exited sessions,
-  refuses a live one with 409), then forgets names/colors/slots/wrapped/autoYes for it. `rm` itself
+- **Close (`POST /api/sessions/<id>/close`, v0.7):** `is_finished()` = not alive, OR alive in a
+  done/idle/failed state (a `--bg` daemon keeps its pid after the work ends, so "dead cards" are
+  almost always alive=true). Finished-but-alive gets `claude stop` first, then `claude rm`; a
+  working/blocked one is refused with 409. `POST /api/sessions/close-finished` loops it over every
+  finished session (the "✕ Close finished" button). `claude rm` itself then forgets names/colors/slots/wrapped/autoYes for it. `rm` itself
   refuses when the worktree has unpushed commits; its message is passed through as the error.
   `settings.wrapped[id]` is set by `/wrap` and by the terminal tab (`/wrapped`), only to style
   Close as primary once the session exits. The terminal tab is not re-rendered on refresh (that

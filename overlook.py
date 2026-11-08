@@ -32,7 +32,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
-VERSION = "0.7.7"
+VERSION = "0.7.8"
 HOME = Path.home()
 WEB = Path(__file__).resolve().parent / "web"
 ID_RE = re.compile(r"^[A-Za-z0-9_-]{4,64}$")
@@ -421,6 +421,7 @@ def sessions() -> list[dict]:
             v["name"], v["renamed"] = names[v["id"]], True
         v["color"] = session_color(v["id"], st_)
         v["wrapped"] = bool(st_.get("wrapped", {}).get(v["id"]))
+        v["finished"] = is_finished(v)
         try:
             v["progress"] = progress_for(Path(v["dir"]) if v.get("dir") else None,
                                          v.get("detail") or "", v.get("updatedAt"))
@@ -739,12 +740,29 @@ def mark_wrapped(jid: str) -> None:
         save_settings(st)
 
 
+FINISHED_RE = re.compile(r"done|complete|finish|success|idle|stop|exit|fail|error|crash|kill", re.I)
+BUSY_RE = re.compile(r"work|run|active|start|input|block|wait|question|permission", re.I)
+
+
+def is_finished(s: dict) -> bool:
+    """A card is 'dead' when its session has exited OR is a background job sitting in done/idle/
+    failed: the daemon stays alive after the work ends, so `alive` alone never clears the board."""
+    if s.get("kind") == "interactive":
+        return False
+    if not s.get("alive"):
+        return True
+    st = s.get("state") or ""
+    return bool(FINISHED_RE.search(st)) and not BUSY_RE.search(st)
+
+
 def close_session(jid: str) -> tuple[int, dict]:
-    """`claude rm`: delete the exited session (and its worktree when safe), then forget
-    everything Overlook kept about it. Refused while it is still running."""
+    """Stop (if the daemon is still up) then `claude rm`: delete the session and its worktree
+    when safe, then forget everything Overlook kept about it. Refused while it is busy."""
     s_ = next((x for x in sessions() if x["id"] == jid), None)
+    if s_ and s_.get("alive") and not is_finished(s_):
+        return 409, {"ok": False, "error": "still working — Stop or Wrap it first"}
     if s_ and s_.get("alive"):
-        return 409, {"ok": False, "error": "still running — Stop or Wrap it first"}
+        run_claude(["stop", jid], timeout=30, jid=jid)      # finished but the daemon lingers
     code, out = run_claude(["rm", jid], timeout=60, jid=jid)
     out = out.strip()
     if code != 0:
@@ -1269,6 +1287,13 @@ class Handler(BaseHTTPRequestHandler):
         if m and ID_RE.match(m.group(1)):
             mark_wrapped(m.group(1))
             return self._send(200, {"ok": True})
+        if p == "/api/sessions/close-finished":
+            done, failed = [], []
+            for s_ in [x for x in sessions() if x.get("finished")]:
+                code, res = close_session(s_["id"])
+                (done if code == 200 else failed).append({"id": s_["id"], "name": s_["name"], **({} if code == 200 else {"error": res.get("error")})})
+            log(f"close-finished: {len(done)} closed, {len(failed)} failed")
+            return self._send(200, {"ok": not failed, "closed": done, "failed": failed})
         m = re.match(r"^/api/sessions/([^/]+)/close$", p)
         if m and ID_RE.match(m.group(1)):
             return self._send(*close_session(m.group(1)))
