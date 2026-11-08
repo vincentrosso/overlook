@@ -293,7 +293,7 @@ function renderStatus() {
       ${progressHTML(s)}
       <div class="detail">${esc(s.detail || "—")}</div>
       <div class="intent" title="${esc(s.intent)}">“${esc(s.intent)}”</div>
-      ${s.kind !== "interactive" && s.alive && c !== "failed" ? `<div style="margin:2px 0 10px">${c === "input" ? `<button class="big primary" data-yes="${esc(s.id)}">✔ Yes / Go</button> ` : ""}<button class="big" data-wrap="${esc(s.id)}" title="Send /wrape: wrap up, then exit">⏏ Wrap</button>${s.autoYes ? ` <span class="hint">auto-yes on</span>` : ""}</div>` : ""}
+      ${s.alive && c !== "failed" ? `<div style="margin:2px 0 10px;display:flex;gap:6px;flex-wrap:wrap;align-items:center">${c === "input" && s.kind !== "interactive" ? `<button class="big primary" data-yes="${esc(s.id)}">✔ Yes / Go</button>` : ""}${s.kind !== "interactive" ? `<button class="big" data-wrap="${esc(s.id)}" title="Send /wrape: wrap up, then exit">⏏ Wrap</button>` : ""}<button class="big" data-open="${esc(s.id)}" title="${s.kind === "interactive" ? "Bring your terminal app forward" : "Attach in a new terminal window (tiled + colour-coded)"}">↗ App</button>${s.autoYes ? `<span class="hint">auto-yes on</span>` : ""}</div>` : ""}
       ${s.kind !== "interactive" && !s.alive ? `<div style="margin:2px 0 10px"><button class="big ${s.wrapped ? "primary" : ""}" data-closesess="${esc(s.id)}" title="claude rm: delete this session and its worktree, remove the card">✕ Close${s.wrapped ? " — wrapped up" : ""}</button></div>` : ""}
       <div class="meta">
         ${s.autoYes ? `<span class="tag" style="color:var(--done)">auto-yes</span>` : ""}

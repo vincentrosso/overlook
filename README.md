@@ -48,7 +48,7 @@ permission mode and an optional model override.
 - **Terminal** tab: the session itself, attached inside the dashboard. Ctrl+Z
   detaches (the agent keeps running); ↻ Reconnect attaches again. **⏏ Wrap &
   exit** (or Ctrl+Shift+W inside the terminal) types `/wrape` into it.
-- **↗ App** puts the same session in a new terminal window instead (Ghostty,
+- **↗ App** (card and drawer) puts the same session in a new terminal window instead (Ghostty,
   iTerm or Terminal; override with `OVERLOOK_TERMINAL`). Windows are **tiled**
   into a 2×2 grid (3×2 on wide screens), each session keeping its cell, and
   **colour-coded**: the dot on the card, the Terminal tab and the real window's
