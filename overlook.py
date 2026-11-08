@@ -32,7 +32,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
-VERSION = "0.7.0"
+VERSION = "0.7.1"
 HOME = Path.home()
 WEB = Path(__file__).resolve().parent / "web"
 ID_RE = re.compile(r"^[A-Za-z0-9_-]{4,64}$")
@@ -53,6 +53,7 @@ def load_settings() -> dict:
     d.setdefault("names", {})   # session id -> display name set from the dashboard
     d.setdefault("colors", {})  # session id -> palette index override (click the dot to cycle)
     d.setdefault("slots", {})   # session id -> grid slot its terminal window was placed in
+    d.setdefault("wrapped", {}) # session id -> epoch when /wrape was sent (Close is offered once it exits)
     return d
 
 
@@ -419,6 +420,7 @@ def sessions() -> list[dict]:
         if names.get(v["id"]):
             v["name"], v["renamed"] = names[v["id"]], True
         v["color"] = session_color(v["id"], st_)
+        v["wrapped"] = bool(st_.get("wrapped", {}).get(v["id"]))
         try:
             v["progress"] = progress_for(Path(v["dir"]) if v.get("dir") else None,
                                          v.get("detail") or "", v.get("updatedAt"))
@@ -728,6 +730,34 @@ def poke(jid: str, reason: str = "button", text: str | None = None) -> dict:
         return {"ok": rendered > 0, "kind": kind}
     finally:
         lock.release()
+
+
+def mark_wrapped(jid: str) -> None:
+    with _settings_lock:
+        st = load_settings()
+        st["wrapped"][jid] = time.time()
+        save_settings(st)
+
+
+def close_session(jid: str) -> tuple[int, dict]:
+    """`claude rm`: delete the exited session (and its worktree when safe), then forget
+    everything Overlook kept about it. Refused while it is still running."""
+    s_ = next((x for x in sessions() if x["id"] == jid), None)
+    if s_ and s_.get("alive"):
+        return 409, {"ok": False, "error": "still running — Stop or Wrap it first"}
+    code, out = run_claude(["rm", jid], timeout=60, jid=jid)
+    out = out.strip()
+    if code != 0:
+        log(f"close {jid} failed: {out[-300:]}")
+        return 409, {"ok": False, "error": out[-600:] or f"claude rm exited {code}"}
+    with _settings_lock:
+        st = load_settings()
+        for k in ("names", "colors", "slots", "wrapped", "autoYes"):
+            st[k].pop(jid, None)
+        save_settings(st)
+    _live_cache["at"] = 0
+    log(f"close {jid}")
+    return 200, {"ok": True, "output": out}
 
 
 def auto_yes_loop():
@@ -1155,7 +1185,16 @@ class Handler(BaseHTTPRequestHandler):
         m = re.match(r"^/api/sessions/([^/]+)/wrap$", p)
         if m and ID_RE.match(m.group(1)):
             res = poke(m.group(1), "wrap", text=WRAP_TEXT)
+            if res.get("ok"):
+                mark_wrapped(m.group(1))
             return self._send(200 if res.get("ok") else 409, res)
+        m = re.match(r"^/api/sessions/([^/]+)/wrapped$", p)   # the terminal tab typed /wrape itself
+        if m and ID_RE.match(m.group(1)):
+            mark_wrapped(m.group(1))
+            return self._send(200, {"ok": True})
+        m = re.match(r"^/api/sessions/([^/]+)/close$", p)
+        if m and ID_RE.match(m.group(1)):
+            return self._send(*close_session(m.group(1)))
         m = re.match(r"^/api/sessions/([^/]+)/stop$", p)
         if m and ID_RE.match(m.group(1)):
             log(f"stop {m.group(1)}")

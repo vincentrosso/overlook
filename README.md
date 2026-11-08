@@ -38,6 +38,9 @@ permission mode and an optional model override.
   stuck 20s, at most 10 times an hour.
 - **✎ Rename** (hover a card): the name is an Overlook-side label, kept in
   its settings file, since the CLI has no rename. Empty clears it.
+- **✕ Close** on any background session that has exited (card, drawer and
+  terminal tab): runs `claude rm`, deleting the session and its worktree when
+  that is safe, and drops the card. Highlighted after a Wrap.
 - **⏏ Wrap** on any live background session: types `/wrape`, which runs the
   `/wrap` wrap-up (CLAUDE.md, notes, memory) and then stops the job itself.
   Refused while a permission or menu prompt is up; answer it first. Override

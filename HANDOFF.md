@@ -1,7 +1,7 @@
 # Overlook handoff
 
 Local web dashboard for Claude Code agents, built as a Conductor replacement.
-v0.7.0, branch `main`, public repo `vincentrosso/overlook`.
+v0.7.1, branch `main`, public repo `vincentrosso/overlook`.
 
 ## Layout
 
@@ -41,6 +41,12 @@ Config dir here is `~/.claude-home`, not `~/.claude`.
   `window_slot` hands out grid cells, remembered in `settings.slots[id]`, freed when the session
   dies. `screen_frame()` reads `NSScreen.visibleFrame` via JXA (0.25s, cached 60s), flipped to a
   top-left origin because AppKit's origin is bottom-left and the terminals' isn't.
+- **Close (`POST /api/sessions/<id>/close`, v0.7):** `claude rm <id>` (works on exited sessions,
+  refuses a live one with 409), then forgets names/colors/slots/wrapped/autoYes for it. `rm` itself
+  refuses when the worktree has unpushed commits; its message is passed through as the error.
+  `settings.wrapped[id]` is set by `/wrap` and by the terminal tab (`/wrapped`), only to style
+  Close as primary once the session exits. The terminal tab is not re-rendered on refresh (that
+  would kill the xterm), so refresh() toggles `#termclose` in place.
 - **Rename (`POST /api/sessions/<id>/rename`, v0.7):** `settings.names[id]` overrides `name` in
   `sessions()` (`renamed: true`). Not pushed into the CLI: `state.json` is daemon-owned and
   `/rename` via pty would cost an attach per edit.
