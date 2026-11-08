@@ -32,7 +32,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
-VERSION = "0.6.0"
+VERSION = "0.7.0"
 HOME = Path.home()
 WEB = Path(__file__).resolve().parent / "web"
 ID_RE = re.compile(r"^[A-Za-z0-9_-]{4,64}$")
@@ -631,6 +631,9 @@ def launch(body: dict) -> tuple[int, dict]:
 
 ANSI_RE = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]|\x1b\][^\x07]*\x07|\x1b[()][A-Z0-9]")
 YES_TEXT = os.environ.get("OVERLOOK_YES_TEXT", "yes, go ahead")
+# Typed by the Wrap button. /wrape = /wrap (update CLAUDE.md, notes, memory) then stop the job itself,
+# so the exit happens AFTER the wrap report is written rather than racing it from here.
+WRAP_TEXT = os.environ.get("OVERLOOK_WRAP_TEXT", "/wrape")
 _poke_locks: dict[str, threading.Lock] = {}
 _poke_log: dict[str, list[float]] = {}
 
@@ -651,7 +654,13 @@ def yes_plan(screen: str) -> tuple[str, bytes]:
     return "text", YES_TEXT.encode() + b"\r"
 
 
-def poke(jid: str, reason: str = "button") -> dict:
+def poke(jid: str, reason: str = "button", text: str | None = None) -> dict:
+    """Attach to a background job's screen over a pty and type into it.
+
+    Default: answer whatever prompt is up (see yes_plan). With `text`, type that
+    command instead -- refused while a permission/menu prompt is up, since the
+    keystrokes would land in the picker rather than the input box.
+    """
     import pty as _pty, select, signal
     if not find_job_dir(jid):
         return {"ok": False, "error": "only background sessions can be answered (terminal sessions can't be attached)"}
@@ -660,6 +669,12 @@ def poke(jid: str, reason: str = "button") -> dict:
         return {"ok": False, "error": "already answering this session"}
     try:
         kind, keys = yes_plan(screen_text(jid))
+        if text is not None:
+            if kind != "text":
+                return {"ok": False, "error": f"a {kind} prompt is up -- answer it first (Yes / Go), then wrap"}
+            # Trailing space closes the slash-command picker so Enter submits the
+            # typed text rather than whichever suggestion is highlighted.
+            kind, keys = "command", (text.rstrip() + " ").encode() + b"\r"
         exe = claude_bin()
         master, slave = _pty.openpty()
         import fcntl, struct, termios
@@ -701,7 +716,7 @@ def poke(jid: str, reason: str = "button") -> dict:
                 pass
         os.close(master)
         _poke_log.setdefault(jid, []).append(time.time())
-        log(f"yes -> {jid} ({kind}, {reason}, rendered {rendered}B)")
+        log(f"{'wrap' if text else 'yes'} -> {jid} ({kind}, {reason}, rendered {rendered}B)")
         _live_cache["at"] = 0
         return {"ok": rendered > 0, "kind": kind}
     finally:
@@ -1023,6 +1038,10 @@ class Handler(BaseHTTPRequestHandler):
                 save_settings(st)
             log(f"auto-yes {jid} -> {bool(body.get('on'))}")
             return self._send(200, {"ok": True, "on": bool(body.get("on"))})
+        m = re.match(r"^/api/sessions/([^/]+)/wrap$", p)
+        if m and ID_RE.match(m.group(1)):
+            res = poke(m.group(1), "wrap", text=WRAP_TEXT)
+            return self._send(200 if res.get("ok") else 409, res)
         m = re.match(r"^/api/sessions/([^/]+)/stop$", p)
         if m and ID_RE.match(m.group(1)):
             log(f"stop {m.group(1)}")

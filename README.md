@@ -36,6 +36,10 @@ permission mode and an optional model override.
   question menu → first option; plain "your turn" → types `yes, go ahead`.
 - **Auto-yes** (per session, off by default): answers for you after it has been
   stuck 20s, at most 10 times an hour.
+- **⏏ Wrap** on any live background session: types `/wrape`, which runs the
+  `/wrap` wrap-up (CLAUDE.md, notes, memory) and then stops the job itself.
+  Refused while a permission or menu prompt is up; answer it first. Override
+  the command with `OVERLOOK_WRAP_TEXT`.
 - **Terminal** tab: the session itself, attached inside the dashboard. Ctrl+Z
   detaches (the agent keeps running); ↻ Reconnect attaches again.
 - **↗ App** puts the same session in a new terminal window instead (Ghostty,

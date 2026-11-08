@@ -1,7 +1,7 @@
 # Overlook handoff
 
 Local web dashboard for Claude Code agents, built as a Conductor replacement.
-v0.6.0, branch `main`, public repo `vincentrosso/overlook`.
+v0.7.0, branch `main`, public repo `vincentrosso/overlook`.
 
 ## Layout
 
@@ -29,6 +29,11 @@ Config dir here is `~/.claude-home`, not `~/.claude`.
 - **Yes / Go (`poke`):** there is no `claude send`. It reads the screen with `claude logs`,
   picks keys (`yes_plan`), runs `claude attach` in a pty, sends keys, then Ctrl+Z to detach.
   Text and Enter must be separate writes, or the Enter is swallowed as paste.
+- **Wrap (`POST /api/sessions/<id>/wrap`, v0.7):** `poke(jid, text=WRAP_TEXT)` types `/wrape `
+  through the same pty path. The trailing space closes the slash picker so Enter submits the
+  typed command, not the highlighted suggestion. Overlook does NOT stop the job: `/wrape`'s
+  own last step is `claude stop` on itself, after the wrap report is written. Refused (409)
+  when `yes_plan` sees a permission/menu prompt, because the keys would land in the picker.
 - **Auto-yes:** opt-in per session, stuck 20s+, 90s between answers, max 10/hour.
   It accepts permission prompts with "don't ask again", so treat it as a real risk surface.
 - **Progress:** `parse_progress` regexes the status line for fractions, percent, ETAs and

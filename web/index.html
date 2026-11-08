@@ -284,7 +284,7 @@ function renderStatus() {
       ${progressHTML(s)}
       <div class="detail">${esc(s.detail || "—")}</div>
       <div class="intent" title="${esc(s.intent)}">“${esc(s.intent)}”</div>
-      ${c === "input" && s.kind !== "interactive" && s.alive ? `<div style="margin:2px 0 10px"><button class="big primary" data-yes="${esc(s.id)}">✔ Yes / Go</button>${s.autoYes ? ` <span class="hint">auto-yes on</span>` : ""}</div>` : ""}
+      ${s.kind !== "interactive" && s.alive && c !== "failed" ? `<div style="margin:2px 0 10px">${c === "input" ? `<button class="big primary" data-yes="${esc(s.id)}">✔ Yes / Go</button> ` : ""}<button class="big" data-wrap="${esc(s.id)}" title="Send /wrape: wrap up, then exit">⏏ Wrap</button>${s.autoYes ? ` <span class="hint">auto-yes on</span>` : ""}</div>` : ""}
       <div class="meta">
         ${s.autoYes ? `<span class="tag" style="color:var(--done)">auto-yes</span>` : ""}
         ${s.kind === "interactive" ? `<span class="tag" style="color:var(--input)">terminal</span>` : ""}
@@ -340,7 +340,7 @@ function mountTerm(id, fresh = false) {
   if (TERM && TERM.id === id && !fresh && TERM.ws.readyState <= 1) { box.appendChild(TERM.el); TERM.fit.fit(); TERM.term.focus(); return; }
   killTerm();
   const el = document.createElement("div"); el.className = "xt"; box.replaceChildren(el);
-  const term = new Terminal({ fontSize: 13, fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace", cursorBlink: true, scrollback: 8000,
+  const term = new Terminal({ fontSize: 16, lineHeight: 1.15, fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace", cursorBlink: true, scrollback: 8000,
     theme: { background: "#0b0d11", foreground: "#e6e1d8", cursor: "#f4ede4", selectionBackground: "#3d424d" } });
   const fit = new FitAddon.FitAddon(); term.loadAddon(fit); term.open(el); fit.fit();
   const ws = new WebSocket(`ws://${location.host}/ws/term/${encodeURIComponent(id)}?cols=${term.cols}&rows=${term.rows}`);
@@ -366,7 +366,7 @@ async function renderDrawer() {
     const tabs = s.kind === "interactive" ? ["overview"] : ["terminal", "overview", "timeline"];
     $("#drawer").classList.toggle("wide", d.tab === "terminal");
     const acts = `<button class="btn" data-open="${esc(s.id)}" title="${s.kind === "interactive" ? "Bring your terminal app forward" : "Attach in your terminal app"}">↗ App</button>` + (s.alive && s.kind !== "interactive"
-        ? (c === "input" ? `<button class="big primary" data-yes="${esc(s.id)}">✔ Yes / Go</button>` : "") + `<button class="big danger" data-stop="${esc(s.id)}">Stop</button>` : "");
+        ? (c === "input" ? `<button class="big primary" data-yes="${esc(s.id)}">✔ Yes / Go</button>` : "") + `<button class="big" data-wrap="${esc(s.id)}" title="Send /wrape: update CLAUDE.md, notes and memory, then exit the session">⏏ Wrap</button><button class="big danger" data-stop="${esc(s.id)}">Stop</button>` : "");
     const head = `<div class="seg" style="margin-bottom:16px">${tabs.map(t => `<button data-tab="${t}" class="big ${d.tab === t ? "on" : ""}">${t[0].toUpperCase() + t.slice(1)}</button>`).join("")}<span class="grow"></span>${acts}</div>`;
     if (d.tab === "terminal") {
       $("#dbd").innerHTML = head + `<div id="termbox"></div><div class="termbar"><span class="hint" id="termhint">Live. Type here as you would in a terminal; Ctrl+Z detaches, the agent keeps running.</span><span class="grow"></span><button class="btn" data-reterm="${esc(s.id)}">↻ Reconnect</button></div>`;
@@ -540,7 +540,7 @@ function setView(v) {
   location.hash = v;
 }
 document.addEventListener("click", async e => {
-  const t = e.target.closest("[data-view],[data-f],[data-d],[data-k],[data-s],[data-a],[data-launch],[data-close],[data-tab],[data-copy],[data-stop],[data-yes],[data-open],[data-reterm],#newBtn,#emptyNew,#scrim");
+  const t = e.target.closest("[data-view],[data-f],[data-d],[data-k],[data-s],[data-a],[data-launch],[data-close],[data-tab],[data-copy],[data-stop],[data-yes],[data-wrap],[data-open],[data-reterm],#newBtn,#emptyNew,#scrim");
   if (!t) return;
   if (t.dataset.launch) { e.stopPropagation(); return openLaunch(t.dataset.launch); }
   if (t.id === "newBtn" || t.id === "emptyNew") { e.preventDefault(); return openLaunch(); }
@@ -564,6 +564,13 @@ document.addEventListener("click", async e => {
     t.disabled = true; const old = t.textContent; t.textContent = "Answering…";
     try { const r = await api(`/api/sessions/${encodeURIComponent(t.dataset.yes)}/yes`, {}); toast(`Sent yes (${r.kind})`); setTimeout(refresh, 1500); }
     catch (err) { toast("Couldn't answer: " + err.message, 7000); }
+    t.disabled = false; t.textContent = old; return;
+  }
+  if (t.dataset.wrap) {
+    e.preventDefault(); e.stopPropagation();
+    t.disabled = true; const old = t.textContent; t.textContent = "Wrapping…";
+    try { await api(`/api/sessions/${encodeURIComponent(t.dataset.wrap)}/wrap`, {}); toast("Sent /wrape — it will wrap up, then exit"); setTimeout(refresh, 1500); }
+    catch (err) { toast("Couldn't wrap: " + err.message, 7000); }
     t.disabled = false; t.textContent = old; return;
   }
   if (t.dataset.stop) {
