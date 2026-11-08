@@ -25,4 +25,5 @@ cat > "$PLIST" <<PL
 PL
 launchctl bootout "gui/$(id -u)/$LABEL" 2>/dev/null || true
 launchctl bootstrap "gui/$(id -u)" "$PLIST"
-echo "Overlook running at http://127.0.0.1:7878 (logs: ~/Library/Logs/overlook.log)"
+echo "Overlook running at http://overlook.localhost:7878 (logs: ~/Library/Logs/overlook.log)"
+echo "Want it without the port? sudo scripts/port80.sh  ->  http://overlook.localhost"

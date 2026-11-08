@@ -8,7 +8,8 @@ No dependencies. One Python file and one HTML file. Runs on `127.0.0.1` only.
 
 ```bash
 git clone https://github.com/vincentrosso/overlook && cd overlook
-python3 overlook.py --open        # http://127.0.0.1:7878
+python3 overlook.py --open        # http://overlook.localhost:7878
+sudo scripts/port80.sh            # optional: http://overlook.localhost (no port) via a pf redirect
 ```
 
 Run it at login on macOS: `scripts/install-launchd.sh` (undo with `--uninstall`).

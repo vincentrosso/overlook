@@ -6,7 +6,7 @@ agent definition on the machine, with one-click launch.
 
 Zero dependencies: Python 3.9+ stdlib only. Binds to 127.0.0.1.
 
-    python3 overlook.py            # http://127.0.0.1:7878
+    python3 overlook.py            # http://overlook.localhost:7878
     python3 overlook.py --open     # ...and open the browser
 """
 from __future__ import annotations
@@ -32,7 +32,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
-VERSION = "0.7.6"
+VERSION = "0.7.7"
 HOME = Path.home()
 WEB = Path(__file__).resolve().parent / "web"
 ID_RE = re.compile(r"^[A-Za-z0-9_-]{4,64}$")
@@ -904,6 +904,16 @@ def _track_new_ghostty(jid: str, before: set[int], slot: tuple[int, int, int, in
     log(f"ghostty place: gave up on pid {pid}: {(r.stderr or r.stdout).strip()[-120:] if r else ''}")
 
 
+# Browsers resolve every *.localhost name to loopback without /etc/hosts, so the dashboard
+# answers to http://overlook.localhost:7878 (and http://overlook.localhost after port80.sh).
+HOST_NAME = os.environ.get("OVERLOOK_HOST", "overlook.localhost")
+
+
+def _loopback_name(host: str) -> bool:
+    host = host.lower()
+    return host in ("127.0.0.1", "localhost", "::1") or host.endswith(".localhost")
+
+
 def _terminal_app() -> str:
     want = os.environ.get("OVERLOOK_TERMINAL")
     if want:
@@ -1046,15 +1056,16 @@ class Handler(BaseHTTPRequestHandler):
     # Only answer to our own origin: stops DNS-rebinding and drive-by POSTs
     # from random web pages to a server that can start agents.
     def _host_ok(self) -> bool:
-        host = (self.headers.get("Host") or "").split(":")[0]
-        return host in ("127.0.0.1", "localhost", "[::1]")
+        host = (self.headers.get("Host") or "").rsplit(":", 1)[0].strip("[]")
+        return _loopback_name(host)
 
     def _origin_ok(self) -> bool:
         origin = self.headers.get("Origin")
         if origin is None:
             return self.headers.get("Sec-Fetch-Site", "same-origin") in ("same-origin", "none")
         o = urlparse(origin)
-        return o.hostname in ("127.0.0.1", "localhost") and o.port == self.server.server_port
+        # Same port, or the portless form when scripts/port80.sh redirects :80 here.
+        return _loopback_name(o.hostname or "") and (o.port or 80) in (self.server.server_port, 80)
 
     def _send(self, code: int, payload, ctype="application/json"):
         data = payload if isinstance(payload, bytes) else json.dumps(payload).encode()
@@ -1286,7 +1297,7 @@ def main():
     ap.add_argument("--app", action="store_true", help="open as a standalone Chrome app window")
     a = ap.parse_args()
     srv = ThreadingHTTPServer(("127.0.0.1", a.port), Handler)
-    url = f"http://127.0.0.1:{a.port}"
+    url = f"http://{HOST_NAME}" + ("" if a.port == 80 else f":{a.port}")
     log(f"Overlook {VERSION} at {url}")
     log(f"config dirs: {', '.join(str(d) for d in config_dirs()) or 'none found'}")
     log(f"claude: {claude_bin() or 'NOT FOUND'}")

@@ -1,11 +1,14 @@
 # Overlook handoff
 
 Local web dashboard for Claude Code agents, built as a Conductor replacement.
-v0.7.6, branch `main`, public repo `vincentrosso/overlook`.
+v0.7.7, branch `main`, public repo `vincentrosso/overlook`.
 
 ## Layout
 
-- `overlook.py`: stdlib-only server, binds 127.0.0.1:7878. Run `python3 overlook.py --open`.
+- `overlook.py`: stdlib-only server, binds 127.0.0.1:7878, answers to any `*.localhost` Host
+  (browsers resolve those to loopback with no /etc/hosts) — canonical URL `http://overlook.localhost:7878`;
+  `sudo scripts/port80.sh` adds a persistent pf `rdr` so `http://overlook.localhost` works too (a user
+  process can't bind :80 on macOS — tested, EACCES — and the LaunchAgent must not run as root). Run `python3 overlook.py --open`.
 - `web/index.html`: the whole UI (vanilla JS, polls every 4s).
 - `scripts/install-launchd.sh`: run at login (`--uninstall` removes it).
 - `~/.config/overlook/settings.json`: per-agent default models and per-session auto-yes.
