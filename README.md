@@ -46,7 +46,10 @@ permission mode and an optional model override.
   detaches (the agent keeps running); ↻ Reconnect attaches again. **⏏ Wrap &
   exit** (or Ctrl+Shift+W inside the terminal) types `/wrape` into it.
 - **↗ App** puts the same session in a new terminal window instead (Ghostty,
-  iTerm or Terminal; override with `OVERLOOK_TERMINAL`).
+  iTerm or Terminal; override with `OVERLOOK_TERMINAL`). Windows are **tiled**
+  into a 2×2 grid (3×2 on wide screens), each session keeping its cell, and
+  **colour-coded**: the dot on the card, the Terminal tab and the real window's
+  title + background all share one colour per session. Click the dot to change it.
 - `python3 overlook.py --app` opens the dashboard as its own window (Chrome
   app mode) rather than a browser tab.
 - Needs-you cards blink, the tab title and icon show a count, and 🔔 Alerts

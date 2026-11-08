@@ -51,6 +51,8 @@ def load_settings() -> dict:
     d.setdefault("agentModels", {})
     d.setdefault("autoYes", {})
     d.setdefault("names", {})   # session id -> display name set from the dashboard
+    d.setdefault("colors", {})  # session id -> palette index override (click the dot to cycle)
+    d.setdefault("slots", {})   # session id -> grid slot its terminal window was placed in
     return d
 
 
@@ -416,6 +418,7 @@ def sessions() -> list[dict]:
         v["autoYes"] = bool(auto.get(v["id"]))
         if names.get(v["id"]):
             v["name"], v["renamed"] = names[v["id"]], True
+        v["color"] = session_color(v["id"], st_)
         try:
             v["progress"] = progress_for(Path(v["dir"]) if v.get("dir") else None,
                                          v.get("detail") or "", v.get("updatedAt"))
@@ -753,6 +756,66 @@ def auto_yes_loop():
 # ---------------------------------------------------------- open (one click)
 
 
+# One colour per session, the same on its card, its Terminal tab and the real
+# terminal window ↗ App opens, so you can tell the windows apart at a glance.
+PALETTE = ["#3fb4f0", "#f2b84b", "#6cd47a", "#e36ba0", "#b48cf2", "#f08a5d", "#4fd1c5", "#d9c54b"]
+
+
+def session_color(jid: str, st: dict | None = None) -> str:
+    st = st or load_settings()
+    i = st.get("colors", {}).get(jid)
+    if not isinstance(i, int):
+        i = int(hashlib.md5(jid.encode()).hexdigest(), 16) % len(PALETTE)
+    return PALETTE[i % len(PALETTE)]
+
+
+def tint(hex_color: str, base: str = "#0b0d11", amount: float = 0.16) -> str:
+    """Blend a little of the session colour into the terminal's dark background."""
+    c = [int(hex_color[i:i + 2], 16) for i in (1, 3, 5)]
+    b = [int(base[i:i + 2], 16) for i in (1, 3, 5)]
+    return "#" + "".join(f"{round(bb + (cc - bb) * amount):02x}" for cc, bb in zip(c, b))
+
+
+_screen_cache: dict = {"at": 0.0, "frame": None}
+
+
+def screen_frame() -> tuple[int, int, int, int] | None:
+    """(x, y, w, h) of the main screen's visible area in points, top-left origin. Cached 60s."""
+    if time.time() - _screen_cache["at"] < 60:
+        return _screen_cache["frame"]
+    frame = None
+    try:
+        js = ('ObjC.import("AppKit"); const f=$.NSScreen.mainScreen.visibleFrame, s=$.NSScreen.mainScreen.frame;'
+              'JSON.stringify([f.origin.x, s.size.height-f.origin.y-f.size.height, f.size.width, f.size.height])')
+        out = subprocess.run(["osascript", "-l", "JavaScript", "-e", js], capture_output=True, text=True, timeout=5).stdout
+        x, y, w, h = json.loads(out.strip())
+        frame = (int(x), int(y), int(w), int(h))
+    except Exception as e:
+        log(f"screen frame: {e!r}")
+    _screen_cache.update(at=time.time(), frame=frame)
+    return frame
+
+
+def window_slot(jid: str, st: dict) -> tuple[int, int, int, int] | None:
+    """Pick a grid cell for this session's terminal window: its previous one if it had one,
+    else the lowest cell not held by another live session. 2x2, or 3x2 on wide screens."""
+    frame = screen_frame()
+    if not frame:
+        return None
+    x0, y0, w, h = frame
+    cols, rows = (3 if w >= 2400 else 2), 2
+    slots = st.setdefault("slots", {})
+    live = {s["id"] for s in sessions() if s.get("alive")}
+    for k in [k for k in slots if k not in live and k != jid]:
+        slots.pop(k)
+    if jid not in slots:
+        taken = set(slots.values())
+        slots[jid] = next((i for i in range(cols * rows) if i not in taken), len(slots) % (cols * rows))
+    i = slots[jid] % (cols * rows)
+    cw, ch = w // cols, h // rows
+    return (x0 + (i % cols) * cw, y0 + (i // cols) * ch, cw, ch)
+
+
 def _terminal_app() -> str:
     want = os.environ.get("OVERLOOK_TERMINAL")
     if want:
@@ -776,18 +839,42 @@ def open_session(jid: str) -> dict:
     exe = claude_bin() or "claude"
     cfg = claude_env(jid).get("CLAUDE_CONFIG_DIR", "")
     cwd = s_.get("cwd") or str(HOME)
+    with _settings_lock:
+        st = load_settings()
+        color, title = session_color(jid, st), s_["name"]
+        slot = window_slot(jid, st)
+        save_settings(st)
+    bg = tint(color)
     q = lambda v: "'" + str(v).replace("'", "'\\''") + "'"
-    cmd = f"cd {q(cwd)}; " + (f"export CLAUDE_CONFIG_DIR={q(cfg)}; " if cfg else "") + f"{q(exe)} attach {q(jid)}; exec $SHELL -l"
+    # OSC 2 = window title, OSC 11 = background colour (Ghostty, iTerm, Terminal all honour it);
+    # OSC 6 is iTerm's tab colour. Claude later rewrites the title; the colours stick.
+    r, g, b = (int(color[i:i + 2], 16) for i in (1, 3, 5))
+    paint = (f"printf '\\e]2;%s\\a\\e]11;%s\\a' {q(title)} {q(bg)}; "
+             f"printf '\\e]6;1;bg;red;brightness;{r}\\a\\e]6;1;bg;green;brightness;{g}\\a\\e]6;1;bg;blue;brightness;{b}\\a'; ")
+    cmd = f"cd {q(cwd)}; " + (f"export CLAUDE_CONFIG_DIR={q(cfg)}; " if cfg else "") + paint + f"{q(exe)} attach {q(jid)}; exec $SHELL -l"
     if app == "Ghostty":
-        subprocess.Popen(["open", "-na", "Ghostty", "--args", "-e", "/bin/zsh", "-lc", cmd])
+        args = [f"--title={title}", f"--background={bg}", f"--unfocused-split-fill={bg}"]
+        if slot:
+            x, y, w, h = slot
+            args += [f"--window-position-x={x}", f"--window-position-y={y}",
+                     f"--window-width={max(60, (w - 40) // 10)}", f"--window-height={max(20, (h - 80) // 21)}"]
+        subprocess.Popen(["open", "-na", "Ghostty", "--args", *args, "-e", "/bin/zsh", "-lc", cmd])
     elif app == "iTerm":
-        script = f'tell application "iTerm" to create window with default profile command "/bin/zsh -lc " & quoted form of {json.dumps(cmd)}'
-        subprocess.Popen(["osascript", "-e", script, "-e", 'tell application "iTerm" to activate'])
+        script = [f'tell application "iTerm" to create window with default profile command "/bin/zsh -lc " & quoted form of {json.dumps(cmd)}']
+        if slot:
+            x, y, w, h = slot
+            script.append(f'tell application "iTerm" to set bounds of front window to {{{x}, {y}, {x + w}, {y + h}}}')
+        script.append('tell application "iTerm" to activate')
+        subprocess.Popen(["osascript", *sum((["-e", s] for s in script), [])])
     else:
-        subprocess.Popen(["osascript", "-e", f'tell application "Terminal" to do script {json.dumps(cmd)}',
-                          "-e", 'tell application "Terminal" to activate'])
-    log(f"open {jid} in {app}")
-    return {"ok": True, "how": f"attached in {app}"}
+        script = [f'tell application "Terminal" to do script {json.dumps(cmd)}']
+        if slot:
+            x, y, w, h = slot
+            script.append(f'tell application "Terminal" to set bounds of front window to {{{x}, {y}, {x + w}, {y + h}}}')
+        script.append('tell application "Terminal" to activate')
+        subprocess.Popen(["osascript", *sum((["-e", s] for s in script), [])])
+    log(f"open {jid} in {app} ({color}, slot {slot})")
+    return {"ok": True, "how": f"attached in {app}", "color": color}
 
 
 # ---------------------------------------------------------------- web terminal
@@ -1055,6 +1142,16 @@ class Handler(BaseHTTPRequestHandler):
                 save_settings(st)
             log(f"rename {m.group(1)} -> {name!r}")
             return self._send(200, {"ok": True, "name": name})
+        m = re.match(r"^/api/sessions/([^/]+)/color$", p)
+        if m and ID_RE.match(m.group(1)):
+            with _settings_lock:
+                st = load_settings()
+                cur = PALETTE.index(session_color(m.group(1), st))
+                idx = body.get("index")
+                st["colors"][m.group(1)] = int(idx) % len(PALETTE) if isinstance(idx, int) else (cur + 1) % len(PALETTE)
+                save_settings(st)
+                color = session_color(m.group(1), st)
+            return self._send(200, {"ok": True, "color": color})
         m = re.match(r"^/api/sessions/([^/]+)/wrap$", p)
         if m and ID_RE.match(m.group(1)):
             res = poke(m.group(1), "wrap", text=WRAP_TEXT)

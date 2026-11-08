@@ -34,6 +34,13 @@ Config dir here is `~/.claude-home`, not `~/.claude`.
   typed command, not the highlighted suggestion. Overlook does NOT stop the job: `/wrape`'s
   own last step is `claude stop` on itself, after the wrap report is written. Refused (409)
   when `yes_plan` sees a permission/menu prompt, because the keys would land in the picker.
+- **Colour + window grid (v0.7):** `session_color(jid)` = md5 of the id into `PALETTE`, overridable
+  via `settings.colors[id]` (`POST …/color` cycles). `open_session` paints the real window with
+  OSC 2 (title) + OSC 11 (background = `tint(color)`) + iTerm's OSC 6 tab colour, and Ghostty also
+  gets `--title/--background/--window-position-*/--window-width/height` (cells, ~10×21pt guess).
+  `window_slot` hands out grid cells, remembered in `settings.slots[id]`, freed when the session
+  dies. `screen_frame()` reads `NSScreen.visibleFrame` via JXA (0.25s, cached 60s), flipped to a
+  top-left origin because AppKit's origin is bottom-left and the terminals' isn't.
 - **Rename (`POST /api/sessions/<id>/rename`, v0.7):** `settings.names[id]` overrides `name` in
   `sessions()` (`renamed: true`). Not pushed into the CLI: `state.json` is daemon-owned and
   `/rename` via pty would cost an attach per edit.
