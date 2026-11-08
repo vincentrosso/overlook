@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Overlook</title>
 <link rel="icon" id="fav" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='7' fill='%23b4462e'/><path d='M6 26V12l10-6 10 6v14' fill='none' stroke='%23f4ede4' stroke-width='2.5'/><circle cx='16' cy='17' r='3' fill='%23f4ede4'/></svg>">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/css/xterm.min.css">
 <style>
 :root {
   --bg: #111214; --panel: #191b1f; --panel2: #202329; --line: #2c3038;
@@ -131,6 +132,10 @@ kbd { font: 11px var(--mono); color: var(--faint); border: 1px solid var(--line)
 .drawer .hd h2 { margin: 0 0 4px; font-size: 18px; }
 .drawer .bd { padding: 18px 22px; overflow: auto; flex: 1; }
 .drawer .x { margin-left: auto; }
+.drawer.wide { width: min(1180px, 97vw); }
+#termbox { height: calc(100vh - 170px); min-height: 320px; background: #0b0d11; border: 1px solid var(--line); border-radius: 10px; padding: 8px; }
+#termbox .xt { height: 100%; }
+.termbar { display: flex; gap: 10px; align-items: center; margin-top: 10px; }
 .tabs { display: flex; gap: 2px; border-bottom: 1px solid var(--line); margin: -4px 0 14px; }
 .tabs button { border: 0; background: none; padding: 8px 12px; cursor: pointer; color: var(--dim); border-bottom: 2px solid transparent; }
 .tabs button.on { color: var(--ink); border-bottom-color: var(--accent); }
@@ -205,6 +210,8 @@ footer { color: var(--faint); font-size: 12px; text-align: center; padding: 20px
 <aside class="drawer" id="drawer"><div class="hd" id="dhd"></div><div class="bd" id="dbd"></div></aside>
 <div class="toast" id="toast"></div>
 
+<script src="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/lib/xterm.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@xterm/addon-fit@0.10.0/lib/addon-fit.min.js"></script>
 <script>
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
@@ -314,11 +321,39 @@ function renderHub() {
 
 // ---------- drawer
 function openDrawer(kind, id) {
-  S.drawer = { kind, id, tab: kind === "session" ? "overview" : "about" };
+  S.drawer = { kind, id, tab: kind === "session" ? "terminal" : "about" };
   $("#scrim").classList.add("on"); $("#drawer").classList.add("on");
   renderDrawer();
 }
-function closeDrawer() { S.drawer = null; $("#scrim").classList.remove("on"); $("#drawer").classList.remove("on"); }
+function closeDrawer() { S.drawer = null; $("#scrim").classList.remove("on"); $("#drawer").classList.remove("on", "wide"); }
+
+// ---- in-page terminal: xterm.js <-> /ws/term/<id> (a pty running `claude attach`)
+let TERM = null;
+function killTerm() {
+  if (!TERM) return;
+  try { TERM.ro.disconnect(); TERM.ws.close(); TERM.term.dispose(); } catch (_) {}
+  TERM = null;
+}
+function mountTerm(id, fresh = false) {
+  const box = $("#termbox"); if (!box) return;
+  if (!window.Terminal) { box.innerHTML = `<div class="empty">xterm.js didn't load (offline?). Use ↗ App.</div>`; return; }
+  if (TERM && TERM.id === id && !fresh && TERM.ws.readyState <= 1) { box.appendChild(TERM.el); TERM.fit.fit(); TERM.term.focus(); return; }
+  killTerm();
+  const el = document.createElement("div"); el.className = "xt"; box.replaceChildren(el);
+  const term = new Terminal({ fontSize: 13, fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace", cursorBlink: true, scrollback: 8000,
+    theme: { background: "#0b0d11", foreground: "#e6e1d8", cursor: "#f4ede4", selectionBackground: "#3d424d" } });
+  const fit = new FitAddon.FitAddon(); term.loadAddon(fit); term.open(el); fit.fit();
+  const ws = new WebSocket(`ws://${location.host}/ws/term/${encodeURIComponent(id)}?cols=${term.cols}&rows=${term.rows}`);
+  ws.binaryType = "arraybuffer";
+  ws.onmessage = e => { if (e.data instanceof ArrayBuffer) term.write(new Uint8Array(e.data)); };
+  ws.onclose = () => { term.write("\r\n\x1b[2m[detached — Reconnect to attach again; the agent is still running]\x1b[0m\r\n"); const h = $("#termhint"); if (h) h.textContent = "Detached."; };
+  ws.onerror = () => toast("Terminal connection failed", 5000);
+  term.onData(d => { if (ws.readyState === 1) ws.send(JSON.stringify({ input: d })); });
+  term.onResize(({ cols, rows }) => { if (ws.readyState === 1) ws.send(JSON.stringify({ resize: [cols, rows] })); });
+  const ro = new ResizeObserver(() => { try { fit.fit(); } catch (_) {} }); ro.observe(el);
+  term.focus();
+  TERM = { id, term, ws, fit, el, ro };
+}
 
 async function renderDrawer() {
   const d = S.drawer; if (!d) return;
@@ -327,13 +362,16 @@ async function renderDrawer() {
     const c = stClass(s.state);
     $("#dhd").innerHTML = `<div><h2>${esc(s.name)}</h2><span class="pill st-${c}">${esc(s.state)}</span> <span class="hint mono">${esc(s.id)}</span></div>
       <button class="btn x" data-close>✕</button>`;
-    const tabs = s.kind === "interactive" ? ["overview"] : ["overview", "timeline"];
-    const acts = s.kind === "interactive"
-      ? `<button class="big" data-open="${esc(s.id)}">Go to terminal</button>`
-      : `<button class="big" data-open="${esc(s.id)}">Open</button>` + (s.alive
+    if (s.kind === "interactive" && d.tab === "terminal") d.tab = "overview";  // no `claude attach` for a terminal session
+    const tabs = s.kind === "interactive" ? ["overview"] : ["terminal", "overview", "timeline"];
+    $("#drawer").classList.toggle("wide", d.tab === "terminal");
+    const acts = `<button class="btn" data-open="${esc(s.id)}" title="${s.kind === "interactive" ? "Bring your terminal app forward" : "Attach in your terminal app"}">↗ App</button>` + (s.alive && s.kind !== "interactive"
         ? (c === "input" ? `<button class="big primary" data-yes="${esc(s.id)}">✔ Yes / Go</button>` : "") + `<button class="big danger" data-stop="${esc(s.id)}">Stop</button>` : "");
     const head = `<div class="seg" style="margin-bottom:16px">${tabs.map(t => `<button data-tab="${t}" class="big ${d.tab === t ? "on" : ""}">${t[0].toUpperCase() + t.slice(1)}</button>`).join("")}<span class="grow"></span>${acts}</div>`;
-    if (d.tab === "overview") {
+    if (d.tab === "terminal") {
+      $("#dbd").innerHTML = head + `<div id="termbox"></div><div class="termbar"><span class="hint" id="termhint">Live. Type here as you would in a terminal; Ctrl+Z detaches, the agent keeps running.</span><span class="grow"></span><button class="btn" data-reterm="${esc(s.id)}">↻ Reconnect</button></div>`;
+      mountTerm(s.id);
+    } else if (d.tab === "overview") {
       $("#dbd").innerHTML = head + progressHTML(s) + `<dl class="kv">
         <dt>${s.kind === "interactive" ? "Last reply" : "Now"}</dt><dd>${esc(s.detail || "—")}</dd>
         <dt>Asked</dt><dd style="word-break:normal">${esc(s.intent)}</dd>
@@ -502,7 +540,7 @@ function setView(v) {
   location.hash = v;
 }
 document.addEventListener("click", async e => {
-  const t = e.target.closest("[data-view],[data-f],[data-d],[data-k],[data-s],[data-a],[data-launch],[data-close],[data-tab],[data-copy],[data-stop],[data-yes],[data-open],#newBtn,#emptyNew,#scrim");
+  const t = e.target.closest("[data-view],[data-f],[data-d],[data-k],[data-s],[data-a],[data-launch],[data-close],[data-tab],[data-copy],[data-stop],[data-yes],[data-open],[data-reterm],#newBtn,#emptyNew,#scrim");
   if (!t) return;
   if (t.dataset.launch) { e.stopPropagation(); return openLaunch(t.dataset.launch); }
   if (t.id === "newBtn" || t.id === "emptyNew") { e.preventDefault(); return openLaunch(); }
@@ -513,6 +551,7 @@ document.addEventListener("click", async e => {
   if (t.dataset.s) return openDrawer("session", t.dataset.s);
   if (t.dataset.a) return openDrawer("agent", t.dataset.a);
   if (t.dataset.tab) { S.drawer.tab = t.dataset.tab; return renderDrawer(); }
+  if (t.dataset.reterm) { e.preventDefault(); return mountTerm(t.dataset.reterm, true); }
   if (t.dataset.copy) { e.preventDefault(); await navigator.clipboard.writeText(t.dataset.copy); return toast("Copied: " + t.dataset.copy); }
   if (t.dataset.open) {
     e.preventDefault(); e.stopPropagation();
@@ -536,7 +575,7 @@ document.addEventListener("click", async e => {
 $("#sq").addEventListener("input", renderStatus);
 $("#aq").addEventListener("input", renderHub);
 document.addEventListener("keydown", e => {
-  if (e.key === "Escape") return closeDrawer();
+  if (e.key === "Escape") { if (TERM && TERM.el.contains(document.activeElement)) return; return closeDrawer(); }
   if (e.key === "/" && !/INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName)) {
     e.preventDefault(); (S.view === "hub" ? $("#aq") : $("#sq")).focus();
   }

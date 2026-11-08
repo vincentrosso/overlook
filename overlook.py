@@ -12,12 +12,19 @@ Zero dependencies: Python 3.9+ stdlib only. Binds to 127.0.0.1.
 from __future__ import annotations
 
 import argparse
+import base64
+import fcntl
+import hashlib
 import json
 import os
+import pty
 import re
 import shutil
+import signal
+import struct
 import subprocess
 import sys
+import termios
 import threading
 import time
 import webbrowser
@@ -25,7 +32,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
-VERSION = "0.5.0"
+VERSION = "0.6.0"
 HOME = Path.home()
 WEB = Path(__file__).resolve().parent / "web"
 ID_RE = re.compile(r"^[A-Za-z0-9_-]{4,64}$")
@@ -74,9 +81,17 @@ def claude_bin() -> str | None:
     return os.environ.get("OVERLOOK_CLAUDE") or shutil.which("claude")
 
 
-def claude_env() -> dict:
+def claude_env(jid: str | None = None) -> dict:
+    """Environment for a claude subprocess. With a job id, CLAUDE_CONFIG_DIR is
+    the config dir that owns that job: several dirs can hold jobs/, and
+    attach/logs/stop only see the one they are pointed at."""
     env = dict(os.environ)
     dirs = config_dirs()
+    if jid:
+        jd = find_job_dir(jid)
+        if jd:
+            env["CLAUDE_CONFIG_DIR"] = str(jd.parent.parent)
+            return env
     # Background jobs live under whichever config dir has a jobs/ folder.
     if "CLAUDE_CONFIG_DIR" not in env:
         for d in dirs:
@@ -86,13 +101,13 @@ def claude_env() -> dict:
     return env
 
 
-def run_claude(args: list[str], timeout: float = 20, cwd: str | None = None) -> tuple[int, str]:
+def run_claude(args: list[str], timeout: float = 20, cwd: str | None = None, jid: str | None = None) -> tuple[int, str]:
     exe = claude_bin()
     if not exe:
         return 127, "claude CLI not found on PATH (set OVERLOOK_CLAUDE)"
     try:
         p = subprocess.run([exe, *args], capture_output=True, text=True,
-                           timeout=timeout, cwd=cwd, env=claude_env())
+                           timeout=timeout, cwd=cwd, env=claude_env(jid))
         return p.returncode, (p.stdout + p.stderr)
     except subprocess.TimeoutExpired:
         return 124, "timed out"
@@ -621,7 +636,7 @@ _poke_log: dict[str, list[float]] = {}
 
 
 def screen_text(jid: str) -> str:
-    code, out = run_claude(["logs", jid], timeout=20)
+    code, out = run_claude(["logs", jid], timeout=20, jid=jid)
     t = ANSI_RE.sub("\n", out)
     lines = [" ".join(l.split()) for l in t.splitlines() if l.strip()]
     return "\n".join(lines[-60:])
@@ -649,7 +664,7 @@ def poke(jid: str, reason: str = "button") -> dict:
         master, slave = _pty.openpty()
         import fcntl, struct, termios
         fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 50, 200, 0, 0))
-        env = claude_env(); env["TERM"] = "xterm-256color"
+        env = claude_env(jid); env["TERM"] = "xterm-256color"
         proc = subprocess.Popen([exe, "attach", jid], stdin=slave, stdout=slave, stderr=slave,
                                 env=env, start_new_session=True, close_fds=True)
         os.close(slave)
@@ -740,7 +755,7 @@ def open_session(jid: str) -> dict:
         subprocess.run(["open", "-a", app], timeout=10)
         return {"ok": True, "how": f"focused {app}"}
     exe = claude_bin() or "claude"
-    cfg = claude_env().get("CLAUDE_CONFIG_DIR", "")
+    cfg = claude_env(jid).get("CLAUDE_CONFIG_DIR", "")
     cwd = s_.get("cwd") or str(HOME)
     q = lambda v: "'" + str(v).replace("'", "'\\''") + "'"
     cmd = f"cd {q(cwd)}; " + (f"export CLAUDE_CONFIG_DIR={q(cfg)}; " if cfg else "") + f"{q(exe)} attach {q(jid)}; exec $SHELL -l"
@@ -754,6 +769,68 @@ def open_session(jid: str) -> dict:
                           "-e", 'tell application "Terminal" to activate'])
     log(f"open {jid} in {app}")
     return {"ok": True, "how": f"attached in {app}"}
+
+
+# ---------------------------------------------------------------- web terminal
+# A pty running `claude attach <id>` streamed to xterm.js over a WebSocket.
+# stdlib only: the handshake, framing and pty plumbing are all here.
+
+WS_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
+
+
+def ws_recv(rf) -> tuple[int, bytes] | None:
+    """One client frame as (opcode, payload); None when the socket is gone."""
+    h = rf.read(2)
+    if len(h) < 2:
+        return None
+    op, ln = h[0] & 0x0F, h[1] & 0x7F
+    if ln == 126:
+        ln = struct.unpack(">H", rf.read(2))[0]
+    elif ln == 127:
+        ln = struct.unpack(">Q", rf.read(8))[0]
+    mask = rf.read(4) if h[1] & 0x80 else None
+    data = rf.read(ln)
+    if mask:
+        data = bytes(c ^ mask[i & 3] for i, c in enumerate(data))
+    return op, data
+
+
+def ws_frame(op: int, data: bytes) -> bytes:
+    n = len(data)
+    if n < 126:
+        return bytes([0x80 | op, n]) + data
+    if n < 65536:
+        return bytes([0x80 | op, 126]) + struct.pack(">H", n) + data
+    return bytes([0x80 | op, 127]) + struct.pack(">Q", n) + data
+
+
+def set_winsize(fd: int, cols: int, rows: int) -> None:
+    cols, rows = max(20, min(int(cols), 500)), max(5, min(int(rows), 200))
+    fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack("HHHH", rows, cols, 0, 0))
+
+
+def spawn_terminal(jid: str, cols: int, rows: int) -> tuple[subprocess.Popen, int]:
+    """`claude attach <id>` on its own pty. Ctrl+Z inside detaches; the session keeps running."""
+    s_ = next((x for x in sessions() if x["id"] == jid), None)
+    if not s_:
+        raise FileNotFoundError("no such session")
+    exe = claude_bin() or "claude"
+    env = claude_env(jid)
+    env.update(TERM="xterm-256color", COLORTERM="truecolor", LANG=env.get("LANG") or "en_US.UTF-8")
+    master, slave = pty.openpty()
+    set_winsize(slave, cols, rows)
+
+    def child():  # own session + this pty as the controlling terminal, so ^C/^Z reach claude
+        os.setsid()
+        fcntl.ioctl(0, termios.TIOCSCTTY, 0)
+
+    proc = subprocess.Popen([exe, "attach", jid], stdin=slave, stdout=slave, stderr=slave,
+                            cwd=s_.get("cwd") if s_.get("cwd") and Path(s_["cwd"]).is_dir() else str(HOME),
+                            env=env, preexec_fn=child, close_fds=True)
+    os.close(slave)
+    log(f"terminal {jid} pid {proc.pid} ({cols}x{rows})")
+    return proc, master
+
 
 # ----------------------------------------------------------------------- http
 
@@ -787,6 +864,87 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(data)
 
+
+    def _ws_terminal(self, jid: str, q: dict) -> None:
+        key = self.headers.get("Sec-WebSocket-Key")
+        if not key or (self.headers.get("Upgrade") or "").lower() != "websocket":
+            return self._send(400, {"error": "websocket expected"})
+        if not self._origin_ok():
+            return self._send(403, {"error": "bad origin"})
+        try:
+            proc, fd = spawn_terminal(jid, int(q.get("cols", ["100"])[0]), int(q.get("rows", ["30"])[0]))
+        except Exception as e:
+            return self._send(404, {"error": str(e)})
+        accept = base64.b64encode(hashlib.sha1((key + WS_GUID).encode()).digest()).decode()
+        self.wfile.write(("HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n"
+                          f"Sec-WebSocket-Accept: {accept}\r\n\r\n").encode())
+        self.close_connection = True
+        wlock = threading.Lock()
+
+        def send(op: int, data: bytes) -> None:
+            with wlock:
+                self.wfile.write(ws_frame(op, data))
+
+        def pump() -> None:  # pty -> browser
+            while True:
+                try:
+                    data = os.read(fd, 65536)
+                except OSError:
+                    data = b""
+                if not data:
+                    break
+                try:
+                    send(2, data)
+                except OSError:
+                    break
+            try:
+                code = proc.wait(timeout=3)
+            except subprocess.TimeoutExpired:
+                code = None
+            try:
+                send(1, json.dumps({"exit": code}).encode())
+                send(8, struct.pack(">H", 1000))
+            except OSError:
+                pass
+
+        threading.Thread(target=pump, daemon=True).start()
+        try:
+            while True:  # browser -> pty
+                fr = ws_recv(self.rfile)
+                if fr is None or fr[0] == 8:
+                    break
+                op, data = fr
+                if op == 9:
+                    send(10, data)
+                elif op == 2:
+                    os.write(fd, data)
+                elif op == 1:
+                    try:
+                        m = json.loads(data)
+                    except json.JSONDecodeError:
+                        continue
+                    if isinstance(m.get("resize"), list) and len(m["resize"]) == 2:
+                        set_winsize(fd, *m["resize"])
+                    elif isinstance(m.get("input"), str):
+                        os.write(fd, m["input"].encode())
+        except (OSError, ValueError):
+            pass
+        finally:
+            if proc.poll() is None:  # the attach client only; the session itself keeps running
+                try:
+                    os.killpg(proc.pid, signal.SIGHUP)
+                    proc.wait(timeout=2)
+                except (OSError, subprocess.TimeoutExpired):
+                    try:
+                        os.killpg(proc.pid, signal.SIGKILL)
+                    except OSError:
+                        pass
+            try:
+                os.close(fd)
+            except OSError:
+                pass
+            log(f"terminal {jid} closed (exit {proc.poll()})")
+
     def do_GET(self):
         if not self._host_ok():
             return self._send(403, {"error": "bad host"})
@@ -796,6 +954,9 @@ class Handler(BaseHTTPRequestHandler):
         try:
             if p in ("/", "/index.html"):
                 return self._send(200, (WEB / "index.html").read_bytes(), "text/html; charset=utf-8")
+            m = re.match(r"^/ws/term/([^/]+)$", p)
+            if m and ID_RE.match(m.group(1)):
+                return self._ws_terminal(m.group(1), q)
             if p == "/api/sessions":
                 return self._send(200, {"sessions": sessions(), "now": time.time()})
             if p == "/api/agents":
@@ -812,7 +973,7 @@ class Handler(BaseHTTPRequestHandler):
                 jid, what = m.groups()
                 if what == "timeline":
                     return self._send(200, {"timeline": timeline(jid, int(q.get("limit", ["200"])[0]))})
-                code, out = run_claude(["logs", jid], timeout=20)
+                code, out = run_claude(["logs", jid], timeout=20, jid=jid)
                 return self._send(200, {"ok": code == 0, "logs": out[-60000:]})
             return self._send(404, {"error": "not found"})
         except Exception as e:  # keep the dashboard up whatever one route does
@@ -865,16 +1026,26 @@ class Handler(BaseHTTPRequestHandler):
         m = re.match(r"^/api/sessions/([^/]+)/stop$", p)
         if m and ID_RE.match(m.group(1)):
             log(f"stop {m.group(1)}")
-            code, out = run_claude(["stop", m.group(1)], timeout=30)
+            code, out = run_claude(["stop", m.group(1)], timeout=30, jid=m.group(1))
             _live_cache["at"] = 0
             return self._send(200 if code == 0 else 500, {"ok": code == 0, "output": out.strip()})
         return self._send(404, {"error": "not found"})
+
+
+def open_app_window(url: str) -> None:
+    """Dashboard as its own window (Chrome/Edge/Brave --app mode), browser tab otherwise."""
+    for app in ("Google Chrome", "Brave Browser", "Microsoft Edge", "Chromium"):
+        if Path(f"/Applications/{app}.app").exists():
+            subprocess.Popen(["open", "-na", app, "--args", f"--app={url}"])
+            return
+    webbrowser.open(url)
 
 
 def main():
     ap = argparse.ArgumentParser(description="Overlook: dashboard for Claude Code agents")
     ap.add_argument("--port", type=int, default=int(os.environ.get("OVERLOOK_PORT", 7878)))
     ap.add_argument("--open", action="store_true", help="open the browser")
+    ap.add_argument("--app", action="store_true", help="open as a standalone Chrome app window")
     a = ap.parse_args()
     srv = ThreadingHTTPServer(("127.0.0.1", a.port), Handler)
     url = f"http://127.0.0.1:{a.port}"
@@ -882,7 +1053,9 @@ def main():
     log(f"config dirs: {', '.join(str(d) for d in config_dirs()) or 'none found'}")
     log(f"claude: {claude_bin() or 'NOT FOUND'}")
     threading.Thread(target=auto_yes_loop, daemon=True).start()
-    if a.open:
+    if a.app:
+        threading.Timer(0.5, lambda: open_app_window(url)).start()
+    elif a.open:
         threading.Timer(0.5, lambda: webbrowser.open(url)).start()
     try:
         srv.serve_forever()

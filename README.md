@@ -17,8 +17,10 @@ Run it at login on macOS: `scripts/install-launchd.sh` (undo with `--uninstall`)
 
 **Status.** Every live Claude Code session, background (`claude --bg`) or a plain `claude` in a terminal: state (working / needs input / done /
 failed), its latest one-line status, the original ask, folder, tokens, pid,
-and when it last moved. Click a card for the full timeline, recent logs,
-attach/logs commands, and a Stop button. Refreshes every 4 seconds.
+and when it last moved. Click a card and you are **in its terminal**: a live
+`claude attach` runs in the page (xterm.js over a WebSocket, stdlib server),
+so you read, type and answer right there. Tabs for the overview and timeline,
+plus a Stop button. Refreshes every 4 seconds.
 
 **Agent Hub.** Every agent Claude Code can use, in one place: your user
 agents (`~/.claude/agents`), project agents (`.claude/agents` in any folder
@@ -34,8 +36,12 @@ permission mode and an optional model override.
   question menu → first option; plain "your turn" → types `yes, go ahead`.
 - **Auto-yes** (per session, off by default): answers for you after it has been
   stuck 20s, at most 10 times an hour.
-- **Open** puts the live session in a new terminal window (Ghostty, iTerm or
-  Terminal; override with `OVERLOOK_TERMINAL`).
+- **Terminal** tab: the session itself, attached inside the dashboard. Ctrl+Z
+  detaches (the agent keeps running); ↻ Reconnect attaches again.
+- **↗ App** puts the same session in a new terminal window instead (Ghostty,
+  iTerm or Terminal; override with `OVERLOOK_TERMINAL`).
+- `python3 overlook.py --app` opens the dashboard as its own window (Chrome
+  app mode) rather than a browser tab.
 - Needs-you cards blink, the tab title and icon show a count, and 🔔 Alerts
   adds a desktop notification + chime.
 - Progress counters (`165/1198`), `ETA ~21:50 PT` and `2,407 (+266)` in a
@@ -44,8 +50,9 @@ permission mode and an optional model override.
 - Per-agent default model, chosen in the Hub (saved in
   `~/.config/overlook/settings.json`, never in the agent file).
 
-Background sessions only for Yes/Open/Stop: an interactive `claude` in a
-terminal can't be attached, so its card shows status and a "Go to terminal".
+Background sessions only for Terminal/Yes/Stop: an interactive `claude` in a
+terminal can't be attached, so its card shows status and ↗ App brings the
+terminal app forward.
 
 ## How it works
 
