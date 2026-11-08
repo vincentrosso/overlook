@@ -20,8 +20,9 @@ Run it at login on macOS: `scripts/install-launchd.sh` (undo with `--uninstall`)
 failed), its latest one-line status, the original ask, folder, tokens, pid,
 and when it last moved. Click a card and you are **in its terminal**: a live
 `claude attach` runs in the page (xterm.js over a WebSocket, stdlib server),
-so you read, type and answer right there. Tabs for the overview and timeline,
-plus a Stop button. Refreshes every 4 seconds.
+so you read, type and answer right there, with auto-yes, Wrap, Exit and Close in
+the bar under it; the card already carries status, ask, folder and tokens, so the
+drawer has no other tabs. Refreshes every 4 seconds.
 
 **Agent Hub.** Every agent Claude Code can use, in one place: your user
 agents (`~/.claude/agents`), project agents (`.claude/agents` in any folder

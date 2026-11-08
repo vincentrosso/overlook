@@ -155,9 +155,6 @@ pre { background: #0c0d0f; border: 1px solid var(--line); border-radius: 8px; pa
 dl.kv { display: grid; grid-template-columns: 110px 1fr; gap: 6px 14px; margin: 0 0 16px; font-size: 13px; }
 dl.kv dt { color: var(--faint); }
 dl.kv dd { margin: 0; word-break: break-all; }
-.tl { list-style: none; margin: 0; padding: 0; }
-.tl li { display: grid; grid-template-columns: 64px 84px 1fr; gap: 10px; padding: 6px 0; border-bottom: 1px solid #23262c; font-size: 13px; }
-.tl .t { color: var(--faint); font-family: var(--mono); font-size: 12px; }
 /* form */
 .form { display: grid; gap: 12px; }
 .form label { display: grid; gap: 5px; font-size: 12px; color: var(--dim); }
@@ -435,23 +432,22 @@ async function renderDrawer() {
     const c = stClass(s.state);
     $("#dhd").innerHTML = `<div><h2><span class="dot" style="background:${esc(s.color)};margin-right:8px"></span>${esc(s.name)}</h2><span class="pill st-${c}">${esc(s.state)}</span> <span class="hint mono">${esc(s.id)}</span></div>
       <button class="btn x" data-close>✕</button>`;
-    if (s.kind === "interactive" && d.tab === "terminal") d.tab = "overview";  // no `claude attach` for a terminal session
-    const tabs = s.kind === "interactive" ? ["overview"] : ["terminal", "overview", "timeline"];
+    // one view per kind: a background session is its terminal (the card already shows status/ask/folder/tokens);
+    // a terminal-app session has no `claude attach`, so it gets the overview
+    d.tab = s.kind === "interactive" ? "overview" : "terminal";
+    const tabs = [d.tab];
     $("#drawer").classList.toggle("wide", d.tab === "terminal");
     const acts = `<button class="btn" data-open="${esc(s.id)}" title="${s.kind === "interactive" ? "Bring your terminal app forward" : "Attach in your terminal app"}">↗ App</button>` + (s.alive && !s.finished && s.kind !== "interactive"
         ? (c === "input" ? `<button class="big primary" data-yes="${esc(s.id)}">✔ Yes / Go</button>` : "") + `<button class="big" data-wrap="${esc(s.id)}" title="Send /wrape: update CLAUDE.md, notes and memory, then exit the session">⏏ Wrap</button><button class="big danger" data-stop="${esc(s.id)}">Stop</button>` : (s.finished ? `<button class="big ${s.wrapped ? "primary" : ""}" data-closesess="${esc(s.id)}" title="claude rm: delete this session and its worktree, remove the card">✕ Close</button>` : ""));
-    const head = `<div class="seg" style="margin-bottom:16px">${tabs.map(t => `<button data-tab="${t}" class="big ${d.tab === t ? "on" : ""}">${t[0].toUpperCase() + t.slice(1)}</button>`).join("")}<span class="grow"></span>${acts}</div>`;
+    const head = `<div class="seg" style="margin-bottom:16px">${tabs.length > 1 ? tabs.map(t => `<button data-tab="${t}" class="big ${d.tab === t ? "on" : ""}">${t[0].toUpperCase() + t.slice(1)}</button>`).join("") : ""}<span class="grow"></span>${acts}</div>`;
     if (d.tab === "terminal") {
-      $("#dbd").innerHTML = head + `<div id="termbox" style="--sc:${esc(s.color)}"></div><div class="termbar"><span class="hint" id="termhint">Live. Type here as you would in a terminal; Ctrl+Z detaches, the agent keeps running. Ctrl+Shift+W wraps up and exits; ⏻ Exit also closes the card.</span><span class="grow"></span><button class="big primary" id="termclose" data-closesess="${esc(s.id)}" style="${s.finished ? "" : "display:none"}">✕ Close</button><button class="btn" data-termwrap title="Type /wrape into this terminal: wrap up, then exit; the card stays until you Close it (Ctrl+Shift+W)">⏏ Wrap</button><button class="big danger" id="termexit" data-termexit="${esc(s.id)}" title="Wrap up, exit, then remove this terminal and card" ${EXITING[s.id] ? "disabled" : ""}>${EXITING[s.id] ? "Exiting…" : "⏻ Exit"}</button><button class="btn" data-reterm="${esc(s.id)}">↻ Reconnect</button></div>`;
+      $("#dbd").innerHTML = head + `<div id="termbox" style="--sc:${esc(s.color)}"></div><div class="termbar"><span class="hint" id="termhint">Live. Type here as you would in a terminal; Ctrl+Z detaches, the agent keeps running. Ctrl+Shift+W wraps up and exits; ⏻ Exit also closes the card.</span><span class="grow"></span>${s.alive && !s.finished ? `<label class="hint" title="Answer “yes / go” for me when it's stuck 20s+ (max 10/hour; permission prompts get “yes, don't ask again”)" style="display:inline-flex;gap:6px;align-items:center;cursor:pointer;white-space:nowrap"><input type="checkbox" id="autoYes" data-auto="${esc(s.id)}" ${s.autoYes ? "checked" : ""}> auto-yes</label>` : ""}<button class="big primary" id="termclose" data-closesess="${esc(s.id)}" style="${s.finished ? "" : "display:none"}">✕ Close</button><button class="btn" data-termwrap title="Type /wrape into this terminal: wrap up, then exit; the card stays until you Close it (Ctrl+Shift+W)">⏏ Wrap</button><button class="big danger" id="termexit" data-termexit="${esc(s.id)}" title="Wrap up, exit, then remove this terminal and card" ${EXITING[s.id] ? "disabled" : ""}>${EXITING[s.id] ? "Exiting…" : "⏻ Exit"}</button><button class="btn" data-reterm="${esc(s.id)}">↻ Reconnect</button></div>`;
       mountTerm(s.id, false, s.color);
     } else if (d.tab === "overview") {
       $("#dbd").innerHTML = head + progressHTML(s) + `<dl class="kv">
         <dt>${s.kind === "interactive" ? "Last reply" : "Now"}</dt><dd>${esc(s.detail || "—")}</dd>
         <dt>Asked</dt><dd style="word-break:normal">${esc(s.intent)}</dd>
         ${s.output ? `<dt>Output</dt><dd>${esc(typeof s.output === "string" ? s.output : JSON.stringify(s.output))}</dd>` : ""}
-        ${s.kind !== "interactive" ? `<dt>Auto-yes</dt><dd><label style="display:inline-flex;gap:8px;align-items:center;cursor:pointer">
-          <input type="checkbox" id="autoYes" data-auto="${esc(s.id)}" ${s.autoYes ? "checked" : ""}> answer “yes / go” for me when it's stuck 20s+ (max 10/hour; permission prompts get “yes, don't ask again”)</label></dd>
-` : ""}
         <dt>Kind</dt><dd>${esc(s.kind || "background")}${s.mode ? " · " + esc(s.mode) : ""}</dd>
         <dt>Agent</dt><dd>${esc(s.agent || "claude")}</dd>
         <dt>Folder</dt><dd class="mono">${esc(s.cwd)}</dd>
@@ -462,14 +458,6 @@ async function renderDrawer() {
         <dt>CLI</dt><dd>${esc(s.cliVersion || "")}</dd>
       </dl>
       `;
-    } else if (d.tab === "timeline") {
-      $("#dbd").innerHTML = head + `<div class="hint">Loading…</div>`;
-      const { timeline } = await api(`/api/sessions/${encodeURIComponent(s.id)}/timeline?limit=300`);
-      if (S.drawer !== d) return;
-      $("#dbd").innerHTML = head + (timeline.length ? `<ul class="tl">${timeline.slice().reverse().map(e =>
-        `<li><span class="t" title="${esc(e.at)}">${new Date(e.at).toLocaleTimeString([], {hour: "2-digit", minute: "2-digit"})}</span>
-         <span><span class="pill st-${stClass(e.state)}">${esc(e.state || "")}</span></span><span>${esc(e.detail || e.text || "")}</span></li>`).join("")}</ul>`
-        : `<div class="empty">No timeline recorded.</div>`);
     } else {
       $("#dbd").innerHTML = head + `<div class="hint">Fetching logs…</div>`;
       const { logs } = await api(`/api/sessions/${encodeURIComponent(s.id)}/logs`);

@@ -1,7 +1,7 @@
 # Overlook handoff
 
 Local web dashboard for Claude Code agents, built as a Conductor replacement.
-v0.7.8, branch `main`, public repo `vincentrosso/overlook`.
+v0.7.9, branch `main`, public repo `vincentrosso/overlook`.
 
 ## Layout
 
