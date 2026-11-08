@@ -32,7 +32,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
-VERSION = "0.7.4"
+VERSION = "0.7.5"
 HOME = Path.home()
 WEB = Path(__file__).resolve().parent / "web"
 ID_RE = re.compile(r"^[A-Za-z0-9_-]{4,64}$")
@@ -863,15 +863,25 @@ def _place_new_ghostty(before: set[int], slot: tuple[int, int, int, int]) -> Non
             break
     if pid is None:
         log("ghostty place: no new process"); return
+    # Only the real terminal window (Ghostty also shows a transient 84x77 window at startup), and
+    # verify: Ghostty re-applies its default size just after the window appears, so one set is
+    # not enough -- keep setting until a read-back agrees.
+    js = (f'tell application "System Events" to tell (first process whose unix id is {pid})\n'
+          f'  set w to first window whose subrole is "AXStandardWindow"\n'
+          f'  set position of w to {{{x}, {y}}}\n  set size of w to {{{w}, {h}}}\n'
+          f'  delay 0.3\n  return (position of w) & (size of w)\nend tell')
+    r = None
     for _ in range(25):
-        r = subprocess.run(["osascript",
-                            "-e", f'tell application "System Events" to tell (first process whose unix id is {pid}) to set position of window 1 to {{{x}, {y}}}',
-                            "-e", f'tell application "System Events" to tell (first process whose unix id is {pid}) to set size of window 1 to {{{w}, {h}}}'],
-                           capture_output=True, text=True, timeout=10)
+        r = subprocess.run(["osascript", "-e", js], capture_output=True, text=True, timeout=15)
         if r.returncode == 0:
-            return
-        time.sleep(0.2)
-    log(f"ghostty place: gave up on pid {pid}: {r.stderr.strip()[-120:]}")
+            try:
+                got = [int(v) for v in r.stdout.strip().split(", ")]
+            except ValueError:
+                got = []
+            if got and all(abs(a - b) <= 4 for a, b in zip(got, (x, y, w, h))):
+                return
+        time.sleep(0.3)
+    log(f"ghostty place: gave up on pid {pid}: {(r.stderr or r.stdout).strip()[-120:] if r else ''}")
 
 
 def _terminal_app() -> str:

@@ -67,6 +67,8 @@ kbd { font: 11px var(--mono); color: var(--faint); border: 1px solid var(--line)
 .card p { margin: 6px 0 10px; color: var(--dim); font-size: 13px; display: -webkit-box;
   -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; min-height: 3.9em; }
 .meta { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; font-size: 11.5px; color: var(--faint); }
+.cwd { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13.5px; color: var(--dim); margin: -2px 0 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; direction: rtl; text-align: left; }
+.cwd b { color: var(--ink); font-weight: 650; }
 .tag { border: 1px solid var(--line); border-radius: 5px; padding: 1px 6px; font-size: 11px; color: var(--dim); background: var(--panel2); }
 .tag.model { color: #c9b3ff; border-color: #3d3456; }
 .tag.src-user { color: #8fe0b6; border-color: #2d4a3c; }
@@ -289,6 +291,7 @@ function renderStatus() {
   $("#sessions").innerHTML = list.length ? list.map(s => {
     const c = stClass(s.state);
     return `<div class="card sess st-${c}" data-s="${esc(s.id)}">
+      <div class="cwd" title="${esc(s.cwd)}"><bdi>${esc(shortPath(s.cwd).split("/").slice(0, -1).join("/"))}${shortPath(s.cwd).includes("/") ? "/" : ""}<b>${esc(shortPath(s.cwd).split("/").pop())}</b></bdi></div>
       <h3><span class="dot" style="background:${esc(s.color)}" data-color="${esc(s.id)}" title="Session colour — click to change"></span><span class="nm">${esc(s.name)}</span><button class="ren" data-rename="${esc(s.id)}" title="Rename">✎</button> <span class="right pill st-${c} ${c === "working" && s.status === "active" ? "pulse" : ""}">${c === "input" ? "needs you" : esc(s.state)}</span></h3>
       ${progressHTML(s)}
       <div class="detail">${esc(s.detail || "—")}</div>
@@ -298,7 +301,6 @@ function renderStatus() {
       <div class="meta">
         ${s.autoYes ? `<span class="tag" style="color:var(--done)">auto-yes</span>` : ""}
         ${s.kind === "interactive" ? `<span class="tag" style="color:var(--input)">terminal</span>` : ""}
-        <span class="tag" title="${esc(s.cwd)}">${esc(shortPath(s.cwd).split("/").slice(-2).join("/"))}</span>
         <span>${fmtTok(s.tokens)} tok</span>
         <span class="right">${ago(s.updatedAt)}</span>
       </div></div>`;

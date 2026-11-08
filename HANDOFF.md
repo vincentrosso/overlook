@@ -1,7 +1,7 @@
 # Overlook handoff
 
 Local web dashboard for Claude Code agents, built as a Conductor replacement.
-v0.7.4, branch `main`, public repo `vincentrosso/overlook`.
+v0.7.5, branch `main`, public repo `vincentrosso/overlook`.
 
 ## Layout
 
@@ -41,7 +41,9 @@ Config dir here is `~/.claude-home`, not `~/.claude`.
   on these launches** (verified live), and `open -na` spawns a NEW ghostty process per window, so
   `_place_new_ghostty` diffs `pgrep` before/after and moves "window 1 of the process whose unix id
   is <pid>" via System Events (needs Accessibility permission for the python/launcher; it worked
-  from a `--bg` job without prompting).
+  from a `--bg` job without prompting). Two traps found live: the process briefly shows a transient
+  84×77 window (so target `first window whose subrole is "AXStandardWindow"`), and Ghostty re-applies
+  its default size right after the window appears, so the set is repeated until a read-back agrees.
   `window_slot` hands out grid cells, remembered in `settings.slots[id]`, freed when the session
   dies. `screen_frame()` reads `NSScreen.visibleFrame` via JXA (0.25s, cached 60s), flipped to a
   top-left origin because AppKit's origin is bottom-left and the terminals' isn't.
