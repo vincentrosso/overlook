@@ -1,7 +1,7 @@
 # Overlook handoff
 
 Local web dashboard for Claude Code agents, built as a Conductor replacement.
-v0.7.2, branch `main`, public repo `vincentrosso/overlook`.
+v0.7.3, branch `main`, public repo `vincentrosso/overlook`.
 
 ## Layout
 
@@ -41,6 +41,10 @@ Config dir here is `~/.claude-home`, not `~/.claude`.
   `window_slot` hands out grid cells, remembered in `settings.slots[id]`, freed when the session
   dies. `screen_frame()` reads `NSScreen.visibleFrame` via JXA (0.25s, cached 60s), flipped to a
   top-left origin because AppKit's origin is bottom-left and the terminals' isn't.
+- **⏻ Exit on the term tab (v0.7.3):** client-side only. `termExit(id)` sends the wrap (websocket,
+  else `/wrap`), puts the id in `EXITING`, and `refresh()` calls `finishExit` → `/close` the first
+  time it sees the session not alive. A 5s interval keeps polling while anything is exiting, since
+  the normal 4s refresh pauses when the tab is hidden. Lost on page reload (it's a JS map).
 - **Close (`POST /api/sessions/<id>/close`, v0.7):** `claude rm <id>` (works on exited sessions,
   refuses a live one with 409), then forgets names/colors/slots/wrapped/autoYes for it. `rm` itself
   refuses when the worktree has unpushed commits; its message is passed through as the error.

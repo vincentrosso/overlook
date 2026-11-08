@@ -46,8 +46,9 @@ permission mode and an optional model override.
   Refused while a permission or menu prompt is up; answer it first. Override
   the command with `OVERLOOK_WRAP_TEXT`.
 - **Terminal** tab: the session itself, attached inside the dashboard. Ctrl+Z
-  detaches (the agent keeps running); ↻ Reconnect attaches again. **⏏ Wrap &
-  exit** (or Ctrl+Shift+W inside the terminal) types `/wrape` into it.
+  detaches (the agent keeps running); ↻ Reconnect attaches again. **⏏ Wrap**
+  (or Ctrl+Shift+W inside the terminal) types `/wrape` into it; **⏻ Exit** does
+  that and then, once the session has exited, Closes it and removes the card.
 - **↗ App** (card and drawer) puts the same session in a new terminal window instead (Ghostty,
   iTerm or Terminal; override with `OVERLOOK_TERMINAL`). Windows are **tiled**
   into a 2×2 grid (3×2 on wide screens), each session keeping its cell, and

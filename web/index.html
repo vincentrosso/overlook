@@ -339,14 +339,38 @@ function closeDrawer() { S.drawer = null; $("#scrim").classList.remove("on"); $(
 
 // ---- in-page terminal: xterm.js <-> /ws/term/<id> (a pty running `claude attach`)
 let TERM = null;
-function termWrap() {
-  if (!TERM || TERM.ws.readyState !== 1) { toast("Terminal isn't connected — use the card's ⏏ Wrap or ↻ Reconnect", 6000); return; }
+function termWrap(quiet = false) {
+  if (!TERM || TERM.ws.readyState !== 1) { toast("Terminal isn't connected — use the card's ⏏ Wrap or ↻ Reconnect", 6000); return false; }
   const ws = TERM.ws;
   ws.send(JSON.stringify({ input: "/wrape " }));
   setTimeout(() => { if (ws.readyState === 1) ws.send(JSON.stringify({ input: "\r" })); }, 400);
   api(`/api/sessions/${encodeURIComponent(TERM.id)}/wrapped`, {}).catch(() => {});
-  toast("Sent /wrape — it will wrap up, then exit"); setTimeout(refresh, 2500);
+  if (!quiet) toast("Sent /wrape — it will wrap up, then exit");
+  setTimeout(refresh, 2500); return true;
 }
+// ⏻ Exit = Wrap, then once the session has exited, Close it (claude rm) and drop the terminal + card.
+// refresh() watches EXITING ids; the wrap itself can take minutes, so this is a poll, not a timer.
+const EXITING = {};
+async function termExit(id) {
+  if (EXITING[id]) return;
+  EXITING[id] = "wrapping";
+  let sent = TERM && TERM.id === id && termWrap(true);
+  if (!sent) { try { await api(`/api/sessions/${encodeURIComponent(id)}/wrap`, {}); sent = true; } catch (err) { toast("Couldn't send /wrape: " + err.message, 8000); } }
+  if (!sent) { delete EXITING[id]; return; }
+  const h = $("#termhint"); if (h) h.textContent = "Exiting: wrapping up… the terminal and card go away on their own when it's done.";
+  const b = $("#termexit"); if (b) { b.disabled = true; b.textContent = "Exiting…"; }
+  toast("Exiting — wrapping up first");
+}
+async function finishExit(id) {
+  EXITING[id] = "closing";
+  try {
+    await api(`/api/sessions/${encodeURIComponent(id)}/close`, {});
+    delete EXITING[id];
+    if (S.drawer?.id === id) { killTerm(); closeDrawer(); }
+    toast("Wrapped up, exited and closed"); refresh();
+  } catch (err) { delete EXITING[id]; toast("Exited, but close failed: " + err.message, 10000); refresh(); }
+}
+setInterval(() => { if (Object.keys(EXITING).length) refresh(); }, 5000);   // keep polling even when the tab is hidden
 function killTerm() {
   if (!TERM) return;
   try { TERM.ro.disconnect(); TERM.ws.close(); TERM.term.dispose(); } catch (_) {}
@@ -401,7 +425,7 @@ async function renderDrawer() {
         ? (c === "input" ? `<button class="big primary" data-yes="${esc(s.id)}">✔ Yes / Go</button>` : "") + `<button class="big" data-wrap="${esc(s.id)}" title="Send /wrape: update CLAUDE.md, notes and memory, then exit the session">⏏ Wrap</button><button class="big danger" data-stop="${esc(s.id)}">Stop</button>` : (s.kind !== "interactive" ? `<button class="big ${s.wrapped ? "primary" : ""}" data-closesess="${esc(s.id)}" title="claude rm: delete this session and its worktree, remove the card">✕ Close</button>` : ""));
     const head = `<div class="seg" style="margin-bottom:16px">${tabs.map(t => `<button data-tab="${t}" class="big ${d.tab === t ? "on" : ""}">${t[0].toUpperCase() + t.slice(1)}</button>`).join("")}<span class="grow"></span>${acts}</div>`;
     if (d.tab === "terminal") {
-      $("#dbd").innerHTML = head + `<div id="termbox" style="--sc:${esc(s.color)}"></div><div class="termbar"><span class="hint" id="termhint">Live. Type here as you would in a terminal; Ctrl+Z detaches, the agent keeps running. Ctrl+Shift+W wraps up and exits.</span><span class="grow"></span><button class="big primary" id="termclose" data-closesess="${esc(s.id)}" style="${s.alive ? "display:none" : ""}">✕ Close</button><button class="btn" data-termwrap title="Type /wrape into this terminal: wrap up, then exit (Ctrl+Shift+W)">⏏ Wrap &amp; exit</button><button class="btn" data-reterm="${esc(s.id)}">↻ Reconnect</button></div>`;
+      $("#dbd").innerHTML = head + `<div id="termbox" style="--sc:${esc(s.color)}"></div><div class="termbar"><span class="hint" id="termhint">Live. Type here as you would in a terminal; Ctrl+Z detaches, the agent keeps running. Ctrl+Shift+W wraps up and exits; ⏻ Exit also closes the card.</span><span class="grow"></span><button class="big primary" id="termclose" data-closesess="${esc(s.id)}" style="${s.alive ? "display:none" : ""}">✕ Close</button><button class="btn" data-termwrap title="Type /wrape into this terminal: wrap up, then exit; the card stays until you Close it (Ctrl+Shift+W)">⏏ Wrap</button><button class="big danger" id="termexit" data-termexit="${esc(s.id)}" title="Wrap up, exit, then remove this terminal and card" ${EXITING[s.id] ? "disabled" : ""}>${EXITING[s.id] ? "Exiting…" : "⏻ Exit"}</button><button class="btn" data-reterm="${esc(s.id)}">↻ Reconnect</button></div>`;
       mountTerm(s.id, false, s.color);
     } else if (d.tab === "overview") {
       $("#dbd").innerHTML = head + progressHTML(s) + `<dl class="kv">
@@ -572,7 +596,7 @@ function setView(v) {
   location.hash = v;
 }
 document.addEventListener("click", async e => {
-  const t = e.target.closest("[data-view],[data-f],[data-d],[data-k],[data-s],[data-a],[data-launch],[data-close],[data-tab],[data-copy],[data-stop],[data-yes],[data-wrap],[data-rename],[data-termwrap],[data-color],[data-closesess],[data-open],[data-reterm],#newBtn,#emptyNew,#scrim");
+  const t = e.target.closest("[data-view],[data-f],[data-d],[data-k],[data-s],[data-a],[data-launch],[data-close],[data-tab],[data-copy],[data-stop],[data-yes],[data-wrap],[data-rename],[data-termwrap],[data-termexit],[data-color],[data-closesess],[data-open],[data-reterm],#newBtn,#emptyNew,#scrim");
   if (!t) return;
   if (t.dataset.launch) { e.stopPropagation(); return openLaunch(t.dataset.launch); }
   if (t.id === "newBtn" || t.id === "emptyNew") { e.preventDefault(); return openLaunch(); }
@@ -615,6 +639,7 @@ document.addEventListener("click", async e => {
     return;
   }
   if ("termwrap" in t.dataset) { e.preventDefault(); termWrap(); return; }
+  if (t.dataset.termexit) { e.preventDefault(); e.stopPropagation(); termExit(t.dataset.termexit); return; }
   if (t.dataset.rename) {
     e.preventDefault(); e.stopPropagation();
     const id = t.dataset.rename, h3 = t.closest("h3"), nm = h3.querySelector(".nm");
@@ -660,6 +685,11 @@ async function refresh() {
     S.sessions = sessions; renderStatus(); checkAlerts();
     $("#refreshed").textContent = "updated " + new Date().toLocaleTimeString([], {hour: "2-digit", minute: "2-digit", second: "2-digit"});
     if (S.drawer?.kind === "session" && S.drawer.tab === "overview") renderDrawer();
+    for (const id of Object.keys(EXITING)) {
+      const s = sessions.find(x => x.id === id);
+      if (!s) delete EXITING[id];
+      else if (!s.alive && EXITING[id] === "wrapping") finishExit(id);
+    }
     if (S.drawer?.kind === "session" && S.drawer.tab === "terminal") {   // no re-render (it would kill the xterm): just reveal Close
       const s = sessions.find(x => x.id === S.drawer.id), b = $("#termclose");
       if (b) b.style.display = s && !s.alive ? "" : "none";
