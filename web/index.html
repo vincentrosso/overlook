@@ -283,7 +283,7 @@ function renderStatus() {
   S.sessions.forEach(s => counts[stClass(s.state)]++);
   $("#summary").innerHTML = FILTERS.map(([k, l]) =>
     `<button class="big ${S.sfilter === k ? "on" : ""} ${k === "input" && counts.input ? "alert" : ""}" data-f="${k}">${l} <span class="n">${counts[k]}</span></button>`).join("")
-    + (S.sessions.some(s => s.finished) ? `<span class="grow"></span><button class="big danger" data-closeall title="Stop + claude rm every finished background session (done / idle / failed); working ones are left alone">✕ Close finished <span class="n">${S.sessions.filter(s => s.finished).length}</span></button>` : "");
+    + (S.sessions.some(s => s.finished) ? `<span class="grow"></span><button class="big danger" data-closeall title="Delete every finished background session (done / idle / failed): stop + claude rm; working ones are left alone">🗑 Delete finished <span class="n">${S.sessions.filter(s => s.finished).length}</span></button>` : "");
   const q = $("#sq").value.toLowerCase();
   const list = S.sessions.filter(s =>
     (S.sfilter === "all" || stClass(s.state) === S.sfilter) &&
@@ -296,15 +296,15 @@ function renderStatus() {
       ${progressHTML(s)}
       <div class="detail">${esc(s.detail || "—")}</div>
       <div class="intent" title="${esc(s.intent)}">“${esc(s.intent)}”</div>
-      ${s.closing ? `<div style="margin:2px 0 10px"><button class="big" disabled>Closing — wrapping up first…</button></div>` : ""}
+      ${s.closing ? `<div style="margin:2px 0 10px"><button class="big" disabled>Deleting — wrapping up first…</button></div>` : ""}
       ${s.alive && !s.finished && !s.closing ? `<div style="margin:2px 0 10px;display:flex;gap:6px;flex-wrap:wrap;align-items:center">${c === "input" && s.kind !== "interactive" ? `<button class="big primary" data-yes="${esc(s.id)}">✔ Yes / Go</button>` : ""}${s.kind !== "interactive" ? `<button class="big" data-wrap="${esc(s.id)}" title="Send /wrape: wrap up, then exit">⏏ Wrap</button>` : ""}<button class="big" data-open="${esc(s.id)}" title="${s.kind === "interactive" ? "Bring your terminal app forward" : "Attach in a new terminal window (tiled + colour-coded)"}">↗ App</button>${s.autoYes ? `<span class="hint">auto-yes on</span>` : ""}</div>` : ""}
-      ${s.finished && !s.closing ? `<div style="margin:2px 0 10px"><button class="big ${s.wrapped ? "primary" : ""}" data-closesess="${esc(s.id)}" title="Stop if needed, then claude rm: delete this session and its worktree, remove the card">✕ Close${s.wrapped ? " — wrapped up" : ""}</button></div>` : ""}
       ${s.alive && s.kind !== "interactive" && s.term_line ? `<div class="term hint mono" title="${esc(s.term_line)}">${esc(s.term_line)}</div>` : ""}
       <div class="meta">
         ${s.autoYes ? `<span class="tag" style="color:var(--done)">auto-yes</span>` : ""}
         ${s.kind === "interactive" ? `<span class="tag" style="color:var(--input)">terminal</span>` : ""}
         <span>${fmtTok(s.tokens)} tok</span>
         <span class="right">${ago(s.updatedAt)}</span>
+        ${s.finished && !s.closing ? `<button class="btn" data-closesess="${esc(s.id)}" title="Delete this session: stop if needed, claude rm it and its worktree, remove the card${s.wrapped ? " (already wrapped up)" : ""}">🗑 Delete session</button>` : ""}
       </div></div>`;
   }).join("") : `<div class="empty">Nothing here.</div>`;
   reportLayout(S.sessions.map(s => s.id));
@@ -418,7 +418,7 @@ function mountTerm(id, fresh = false, color = null) {
   ws.onmessage = e => { if (e.data instanceof ArrayBuffer) term.write(new Uint8Array(e.data)); };
   ws.onclose = () => {
     const s = S.sessions.find(x => x.id === id), gone = s && !s.alive;
-    term.write(gone ? "\r\n\x1b[2m[session exited — Close removes it]\x1b[0m\r\n" : "\r\n\x1b[2m[detached — Reconnect to attach again; the agent is still running]\x1b[0m\r\n");
+    term.write(gone ? "\r\n\x1b[2m[session exited — Delete session removes it]\x1b[0m\r\n" : "\r\n\x1b[2m[detached — Reconnect to attach again; the agent is still running]\x1b[0m\r\n");
     const h = $("#termhint"); if (h) h.textContent = gone ? "Exited." : "Detached.";
     setTimeout(refresh, 1200);
   };
@@ -447,10 +447,10 @@ async function renderDrawer() {
     const tabs = [d.tab];
     $("#drawer").classList.toggle("wide", d.tab === "terminal");
     const acts = `<button class="btn" data-open="${esc(s.id)}" title="${s.kind === "interactive" ? "Bring your terminal app forward" : "Attach in your terminal app"}">↗ App</button>` + (s.alive && !s.finished && s.kind !== "interactive"
-        ? (c === "input" ? `<button class="big primary" data-yes="${esc(s.id)}">✔ Yes / Go</button>` : "") + `<button class="big" data-wrap="${esc(s.id)}" title="Send /wrape: update CLAUDE.md, notes and memory, then exit the session">⏏ Wrap</button><button class="big danger" data-stop="${esc(s.id)}" title="Wrap up, then stop (Shift-click: stop now, no wrap)">Stop</button>` : (s.finished ? `<button class="big ${s.wrapped ? "primary" : ""}" data-closesess="${esc(s.id)}" title="claude rm: delete this session and its worktree, remove the card">✕ Close</button>` : ""));
+        ? (c === "input" ? `<button class="big primary" data-yes="${esc(s.id)}">✔ Yes / Go</button>` : "") + `<button class="big" data-wrap="${esc(s.id)}" title="Send /wrape: update CLAUDE.md, notes and memory, then exit the session">⏏ Wrap</button><button class="big danger" data-stop="${esc(s.id)}" title="Wrap up, then stop (Shift-click: stop now, no wrap)">Stop</button>` : (s.finished ? `<button class="big ${s.wrapped ? "primary" : ""}" data-closesess="${esc(s.id)}" title="claude rm: delete this session and its worktree, remove the card">🗑 Delete session</button>` : ""));
     const head = `<div class="seg" style="margin-bottom:16px">${tabs.length > 1 ? tabs.map(t => `<button data-tab="${t}" class="big ${d.tab === t ? "on" : ""}">${t[0].toUpperCase() + t.slice(1)}</button>`).join("") : ""}<span class="grow"></span>${acts}</div>`;
     if (d.tab === "terminal") {
-      $("#dbd").innerHTML = head + `<div id="termbox" style="--sc:${esc(s.color)}"></div><div class="termbar"><span class="hint" id="termhint">Live. Type here as you would in a terminal; Ctrl+Z detaches, the agent keeps running. Ctrl+Shift+W wraps up and exits; ⏻ Exit also closes the card.</span><span class="grow"></span>${s.alive && !s.finished ? `<label class="hint" title="Answer “yes / go” for me when it's stuck 20s+ (max 10/hour; permission prompts get “yes, don't ask again”)" style="display:inline-flex;gap:6px;align-items:center;cursor:pointer;white-space:nowrap"><input type="checkbox" id="autoYes" data-auto="${esc(s.id)}" ${s.autoYes ? "checked" : ""}> auto-yes</label>` : ""}<button class="big primary" id="termclose" data-closesess="${esc(s.id)}" style="${s.finished ? "" : "display:none"}">✕ Close</button><button class="btn" data-termwrap title="Type /wrape into this terminal: wrap up, then exit; the card stays until you Close it (Ctrl+Shift+W)">⏏ Wrap</button><button class="big danger" id="termexit" data-termexit="${esc(s.id)}" title="Wrap up, exit, then remove this terminal and card" ${EXITING[s.id] ? "disabled" : ""}>${EXITING[s.id] ? "Exiting…" : "⏻ Exit"}</button><button class="btn" data-reterm="${esc(s.id)}">↻ Reconnect</button></div>`;
+      $("#dbd").innerHTML = head + `<div id="termbox" style="--sc:${esc(s.color)}"></div><div class="termbar"><span class="hint" id="termhint">Live. Type here as you would in a terminal; Ctrl+Z detaches, the agent keeps running. Ctrl+Shift+W wraps up and exits; ⏻ Exit also deletes the session.</span><span class="grow"></span>${s.alive && !s.finished ? `<label class="hint" title="Answer “yes / go” for me when it's stuck 20s+ (max 10/hour; permission prompts get “yes, don't ask again”)" style="display:inline-flex;gap:6px;align-items:center;cursor:pointer;white-space:nowrap"><input type="checkbox" id="autoYes" data-auto="${esc(s.id)}" ${s.autoYes ? "checked" : ""}> auto-yes</label>` : ""}<button class="big primary" id="termclose" data-closesess="${esc(s.id)}" style="${s.finished ? "" : "display:none"}">🗑 Delete session</button><button class="btn" data-termwrap title="Type /wrape into this terminal: wrap up, then exit; the card stays until you delete it (Ctrl+Shift+W)">⏏ Wrap</button><button class="big danger" id="termexit" data-termexit="${esc(s.id)}" title="Wrap up, exit, then remove this terminal and card" ${EXITING[s.id] ? "disabled" : ""}>${EXITING[s.id] ? "Exiting…" : "⏻ Exit"}</button><button class="btn" data-reterm="${esc(s.id)}">↻ Reconnect</button></div>`;
       mountTerm(s.id, false, s.color);
     } else if (d.tab === "overview") {
       $("#dbd").innerHTML = head + progressHTML(s) + `<dl class="kv">
@@ -641,7 +641,7 @@ document.addEventListener("click", async e => {
     try {
       const r = await api("/api/sessions/close-finished", {});
       if (S.drawer && r.closed.some(x => x.id === S.drawer.id)) { killTerm(); closeDrawer(); }
-      toast(`Closed ${r.closed.length}` + (r.wrapping?.length ? `, ${r.wrapping.length} wrapping up first` : "") + (r.failed.length ? `, ${r.failed.length} refused: ${r.failed.map(x => x.name).join(", ")}` : ""), r.failed.length ? 9000 : 3500);
+      toast(`Deleted ${r.closed.length}` + (r.wrapping?.length ? `, ${r.wrapping.length} wrapping up first` : "") + (r.failed.length ? `, ${r.failed.length} refused: ${r.failed.map(x => x.name).join(", ")}` : ""), r.failed.length ? 9000 : 3500);
     } catch (err) { toast("Couldn't close: " + err.message, 8000); }
     refresh(); return;
   }
@@ -651,9 +651,9 @@ document.addEventListener("click", async e => {
     try {
       const r = await api(`/api/sessions/${encodeURIComponent(t.dataset.closesess)}/close`, {});
       if (r.pending) { toast("Wrapping up first — it closes itself when done", 5000); t.textContent = "Closing…"; }
-      else { if (S.drawer?.id === t.dataset.closesess) { killTerm(); closeDrawer(); } toast("Closed"); }
+      else { if (S.drawer?.id === t.dataset.closesess) { killTerm(); closeDrawer(); } toast("Deleted"); }
       refresh();
-    } catch (err) { toast("Couldn't close: " + err.message, 8000); t.disabled = false; t.textContent = "✕ Close"; }
+    } catch (err) { toast("Couldn't delete: " + err.message, 8000); t.disabled = false; t.textContent = "🗑 Delete session"; }
     return;
   }
   if (t.dataset.color) {
@@ -710,7 +710,7 @@ async function refresh() {
     S.sessions = sessions; renderStatus(); checkAlerts();
     $("#refreshed").textContent = "updated " + new Date().toLocaleTimeString([], {hour: "2-digit", minute: "2-digit", second: "2-digit"});
     if (S.drawer?.kind === "session" && S.drawer.tab === "overview") renderDrawer();
-    for (const id of Object.keys(EXITING)) if (!sessions.find(x => x.id === id)) { delete EXITING[id]; toast("Wrapped up, exited and closed"); }
+    for (const id of Object.keys(EXITING)) if (!sessions.find(x => x.id === id)) { delete EXITING[id]; toast("Wrapped up, exited and deleted"); }
     if (S.drawer?.kind === "session" && !sessions.find(x => x.id === S.drawer.id)) { killTerm(); closeDrawer(); }   // closed (rm'd) underneath us
     if (S.drawer?.kind === "session" && S.drawer.tab === "terminal") {   // no re-render (it would kill the xterm): just reveal Close
       const s = sessions.find(x => x.id === S.drawer.id), b = $("#termclose");
