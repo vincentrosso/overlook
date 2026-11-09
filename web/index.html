@@ -67,6 +67,7 @@ kbd { font: 11px var(--mono); color: var(--faint); border: 1px solid var(--line)
 .card p { margin: 6px 0 10px; color: var(--dim); font-size: 13px; display: -webkit-box;
   -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; min-height: 3.9em; }
 .meta { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; font-size: 11.5px; color: var(--faint); }
+.cwd .work { color: var(--input); }
 .cwd { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13.5px; color: var(--dim); margin: -2px 0 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; direction: rtl; text-align: left; }
 .cwd b { color: var(--ink); font-weight: 650; }
 .tag { border: 1px solid var(--line); border-radius: 5px; padding: 1px 6px; font-size: 11px; color: var(--dim); background: var(--panel2); }
@@ -289,13 +290,14 @@ function renderStatus() {
   $("#sessions").innerHTML = list.length ? list.map(s => {
     const c = stClass(s.state);
     return `<div class="card sess st-${c}" data-s="${esc(s.id)}">
-      <div class="cwd" title="${esc(s.cwd)}"><bdi>${esc(shortPath(s.cwd).split("/").slice(0, -1).join("/"))}${shortPath(s.cwd).includes("/") ? "/" : ""}<b>${esc(shortPath(s.cwd).split("/").pop())}</b></bdi></div>
+      <div class="cwd" title="${esc(s.cwd)}${s.work && s.work !== s.cwd ? " — now working in " + esc(s.work) : ""}"><bdi>${esc(shortPath(s.cwd).split("/").slice(0, -1).join("/"))}${shortPath(s.cwd).includes("/") ? "/" : ""}<b>${esc(shortPath(s.cwd).split("/").pop())}</b>${s.work && s.work !== s.cwd ? ` <span class="work">→ <b>${esc(shortPath(s.work).split("/").pop())}</b></span>` : ""}</bdi></div>
       <h3><span class="dot" style="background:${esc(s.color)}" data-color="${esc(s.id)}" title="Session colour — click to change"></span><span class="nm">${esc(s.name)}</span><button class="ren" data-rename="${esc(s.id)}" title="Rename">✎</button> <span class="right pill st-${c} ${c === "working" && s.status === "active" ? "pulse" : ""}">${c === "input" ? "needs you" : esc(s.state)}</span></h3>
       ${progressHTML(s)}
       <div class="detail">${esc(s.detail || "—")}</div>
       <div class="intent" title="${esc(s.intent)}">“${esc(s.intent)}”</div>
-      ${s.alive && !s.finished ? `<div style="margin:2px 0 10px;display:flex;gap:6px;flex-wrap:wrap;align-items:center">${c === "input" && s.kind !== "interactive" ? `<button class="big primary" data-yes="${esc(s.id)}">✔ Yes / Go</button>` : ""}${s.kind !== "interactive" ? `<button class="big" data-wrap="${esc(s.id)}" title="Send /wrape: wrap up, then exit">⏏ Wrap</button>` : ""}<button class="big" data-open="${esc(s.id)}" title="${s.kind === "interactive" ? "Bring your terminal app forward" : "Attach in a new terminal window (tiled + colour-coded)"}">↗ App</button>${s.autoYes ? `<span class="hint">auto-yes on</span>` : ""}</div>` : ""}
-      ${s.finished ? `<div style="margin:2px 0 10px"><button class="big ${s.wrapped ? "primary" : ""}" data-closesess="${esc(s.id)}" title="Stop if needed, then claude rm: delete this session and its worktree, remove the card">✕ Close${s.wrapped ? " — wrapped up" : ""}</button></div>` : ""}
+      ${s.closing ? `<div style="margin:2px 0 10px"><button class="big" disabled>Closing — wrapping up first…</button></div>` : ""}
+      ${s.alive && !s.finished && !s.closing ? `<div style="margin:2px 0 10px;display:flex;gap:6px;flex-wrap:wrap;align-items:center">${c === "input" && s.kind !== "interactive" ? `<button class="big primary" data-yes="${esc(s.id)}">✔ Yes / Go</button>` : ""}${s.kind !== "interactive" ? `<button class="big" data-wrap="${esc(s.id)}" title="Send /wrape: wrap up, then exit">⏏ Wrap</button>` : ""}<button class="big" data-open="${esc(s.id)}" title="${s.kind === "interactive" ? "Bring your terminal app forward" : "Attach in a new terminal window (tiled + colour-coded)"}">↗ App</button>${s.autoYes ? `<span class="hint">auto-yes on</span>` : ""}</div>` : ""}
+      ${s.finished && !s.closing ? `<div style="margin:2px 0 10px"><button class="big ${s.wrapped ? "primary" : ""}" data-closesess="${esc(s.id)}" title="Stop if needed, then claude rm: delete this session and its worktree, remove the card">✕ Close${s.wrapped ? " — wrapped up" : ""}</button></div>` : ""}
       <div class="meta">
         ${s.autoYes ? `<span class="tag" style="color:var(--done)">auto-yes</span>` : ""}
         ${s.kind === "interactive" ? `<span class="tag" style="color:var(--input)">terminal</span>` : ""}
@@ -303,7 +305,20 @@ function renderStatus() {
         <span class="right">${ago(s.updatedAt)}</span>
       </div></div>`;
   }).join("") : `<div class="empty">Nothing here.</div>`;
+  reportLayout(S.sessions.map(s => s.id));
 }
+// The terminal windows ↗ App opens take the same cell their card has: same column count, same order.
+// Posted only when it changes; the server re-tiles the open windows.
+let LAYOUT = "";
+function reportLayout(ids) {
+  const g = $("#sessions"); if (!g || !ids.length) return;
+  const cols = Math.max(1, getComputedStyle(g).gridTemplateColumns.split(" ").filter(Boolean).length);
+  const key = cols + ":" + ids.join(",");
+  if (key === LAYOUT) return;
+  LAYOUT = key;
+  api("/api/layout", { cols, ids }).catch(() => { LAYOUT = ""; });
+}
+let _rsz; window.addEventListener("resize", () => { clearTimeout(_rsz); _rsz = setTimeout(() => reportLayout(S.sessions.map(s => s.id)), 300); });
 
 // ---------- hub view
 const HUBF = [["all", "All", a => true], ["mine", "Mine", a => a.source === "user" || a.source === "project"],
@@ -362,29 +377,21 @@ function termWrap(quiet = false) {
   if (!quiet) toast("Sent /wrape — it will wrap up, then exit");
   setTimeout(refresh, 2500); return true;
 }
-// ⏻ Exit = Wrap, then once the session has exited, Close it (claude rm) and drop the terminal + card.
-// refresh() watches EXITING ids; the wrap itself can take minutes, so this is a poll, not a timer.
+// ⏻ Exit = Wrap, then Close. /wrape is typed into this terminal when it is live (else the server
+// types it); /close then waits server-side and `claude rm`s once the session has exited. EXITING
+// only drives the button text; refresh() drops the drawer when the card disappears.
 const EXITING = {};
 async function termExit(id) {
   if (EXITING[id]) return;
   EXITING[id] = "wrapping";
-  let sent = TERM && TERM.id === id && termWrap(true);
-  if (!sent) { try { await api(`/api/sessions/${encodeURIComponent(id)}/wrap`, {}); sent = true; } catch (err) { toast("Couldn't send /wrape: " + err.message, 8000); } }
-  if (!sent) { delete EXITING[id]; return; }
+  if (TERM && TERM.id === id) termWrap(true);
+  try { await api(`/api/sessions/${encodeURIComponent(id)}/close`, {}); }
+  catch (err) { delete EXITING[id]; toast("Couldn't exit: " + err.message, 8000); return; }
   const h = $("#termhint"); if (h) h.textContent = "Exiting: wrapping up… the terminal and card go away on their own when it's done.";
   const b = $("#termexit"); if (b) { b.disabled = true; b.textContent = "Exiting…"; }
   toast("Exiting — wrapping up first");
 }
-async function finishExit(id) {
-  EXITING[id] = "closing";
-  try {
-    await api(`/api/sessions/${encodeURIComponent(id)}/close`, {});
-    delete EXITING[id];
-    if (S.drawer?.id === id) { killTerm(); closeDrawer(); }
-    toast("Wrapped up, exited and closed"); refresh();
-  } catch (err) { delete EXITING[id]; toast("Exited, but close failed: " + err.message, 10000); refresh(); }
-}
-setInterval(() => { if (Object.keys(EXITING).length) refresh(); }, 5000);   // keep polling even when the tab is hidden
+setInterval(() => { if (Object.keys(EXITING).length || S.sessions.some(s => s.closing)) refresh(); }, 5000);   // keep polling even when the tab is hidden
 function killTerm() {
   if (!TERM) return;
   try { TERM.ro.disconnect(); TERM.ws.close(); TERM.term.dispose(); } catch (_) {}
@@ -430,7 +437,7 @@ async function renderDrawer() {
   if (d.kind === "session") {
     const s = S.sessions.find(x => x.id === d.id); if (!s) return;
     const c = stClass(s.state);
-    $("#dhd").innerHTML = `<div><h2><span class="dot" style="background:${esc(s.color)};margin-right:8px"></span>${esc(s.name)}</h2><span class="pill st-${c}">${esc(s.state)}</span> <span class="hint mono">${esc(s.id)}</span></div>
+    $("#dhd").innerHTML = `<div><h2><span class="dot" style="background:${esc(s.color)};margin-right:8px"></span>${esc(s.name)}</h2><span class="pill st-${c}">${esc(s.state)}</span> <span class="hint mono">${esc(s.id)}</span> <span class="hint mono" title="${esc(s.work || s.cwd)}">${esc(shortPath(s.work || s.cwd))}</span></div>
       <button class="btn x" data-close>✕</button>`;
     // one view per kind: a background session is its terminal (the card already shows status/ask/folder/tokens);
     // a terminal-app session has no `claude attach`, so it gets the overview
@@ -438,7 +445,7 @@ async function renderDrawer() {
     const tabs = [d.tab];
     $("#drawer").classList.toggle("wide", d.tab === "terminal");
     const acts = `<button class="btn" data-open="${esc(s.id)}" title="${s.kind === "interactive" ? "Bring your terminal app forward" : "Attach in your terminal app"}">↗ App</button>` + (s.alive && !s.finished && s.kind !== "interactive"
-        ? (c === "input" ? `<button class="big primary" data-yes="${esc(s.id)}">✔ Yes / Go</button>` : "") + `<button class="big" data-wrap="${esc(s.id)}" title="Send /wrape: update CLAUDE.md, notes and memory, then exit the session">⏏ Wrap</button><button class="big danger" data-stop="${esc(s.id)}">Stop</button>` : (s.finished ? `<button class="big ${s.wrapped ? "primary" : ""}" data-closesess="${esc(s.id)}" title="claude rm: delete this session and its worktree, remove the card">✕ Close</button>` : ""));
+        ? (c === "input" ? `<button class="big primary" data-yes="${esc(s.id)}">✔ Yes / Go</button>` : "") + `<button class="big" data-wrap="${esc(s.id)}" title="Send /wrape: update CLAUDE.md, notes and memory, then exit the session">⏏ Wrap</button><button class="big danger" data-stop="${esc(s.id)}" title="Wrap up, then stop (Shift-click: stop now, no wrap)">Stop</button>` : (s.finished ? `<button class="big ${s.wrapped ? "primary" : ""}" data-closesess="${esc(s.id)}" title="claude rm: delete this session and its worktree, remove the card">✕ Close</button>` : ""));
     const head = `<div class="seg" style="margin-bottom:16px">${tabs.length > 1 ? tabs.map(t => `<button data-tab="${t}" class="big ${d.tab === t ? "on" : ""}">${t[0].toUpperCase() + t.slice(1)}</button>`).join("") : ""}<span class="grow"></span>${acts}</div>`;
     if (d.tab === "terminal") {
       $("#dbd").innerHTML = head + `<div id="termbox" style="--sc:${esc(s.color)}"></div><div class="termbar"><span class="hint" id="termhint">Live. Type here as you would in a terminal; Ctrl+Z detaches, the agent keeps running. Ctrl+Shift+W wraps up and exits; ⏻ Exit also closes the card.</span><span class="grow"></span>${s.alive && !s.finished ? `<label class="hint" title="Answer “yes / go” for me when it's stuck 20s+ (max 10/hour; permission prompts get “yes, don't ask again”)" style="display:inline-flex;gap:6px;align-items:center;cursor:pointer;white-space:nowrap"><input type="checkbox" id="autoYes" data-auto="${esc(s.id)}" ${s.autoYes ? "checked" : ""}> auto-yes</label>` : ""}<button class="big primary" id="termclose" data-closesess="${esc(s.id)}" style="${s.finished ? "" : "display:none"}">✕ Close</button><button class="btn" data-termwrap title="Type /wrape into this terminal: wrap up, then exit; the card stays until you Close it (Ctrl+Shift+W)">⏏ Wrap</button><button class="big danger" id="termexit" data-termexit="${esc(s.id)}" title="Wrap up, exit, then remove this terminal and card" ${EXITING[s.id] ? "disabled" : ""}>${EXITING[s.id] ? "Exiting…" : "⏻ Exit"}</button><button class="btn" data-reterm="${esc(s.id)}">↻ Reconnect</button></div>`;
@@ -632,7 +639,7 @@ document.addEventListener("click", async e => {
     try {
       const r = await api("/api/sessions/close-finished", {});
       if (S.drawer && r.closed.some(x => x.id === S.drawer.id)) { killTerm(); closeDrawer(); }
-      toast(`Closed ${r.closed.length}` + (r.failed.length ? `, ${r.failed.length} refused: ${r.failed.map(x => x.name).join(", ")}` : ""), r.failed.length ? 9000 : 3500);
+      toast(`Closed ${r.closed.length}` + (r.wrapping?.length ? `, ${r.wrapping.length} wrapping up first` : "") + (r.failed.length ? `, ${r.failed.length} refused: ${r.failed.map(x => x.name).join(", ")}` : ""), r.failed.length ? 9000 : 3500);
     } catch (err) { toast("Couldn't close: " + err.message, 8000); }
     refresh(); return;
   }
@@ -640,9 +647,10 @@ document.addEventListener("click", async e => {
     e.preventDefault(); e.stopPropagation();
     t.disabled = true; t.textContent = "Closing…";
     try {
-      await api(`/api/sessions/${encodeURIComponent(t.dataset.closesess)}/close`, {});
-      if (S.drawer?.id === t.dataset.closesess) { killTerm(); closeDrawer(); }
-      toast("Closed"); refresh();
+      const r = await api(`/api/sessions/${encodeURIComponent(t.dataset.closesess)}/close`, {});
+      if (r.pending) { toast("Wrapping up first — it closes itself when done", 5000); t.textContent = "Closing…"; }
+      else { if (S.drawer?.id === t.dataset.closesess) { killTerm(); closeDrawer(); } toast("Closed"); }
+      refresh();
     } catch (err) { toast("Couldn't close: " + err.message, 8000); t.disabled = false; t.textContent = "✕ Close"; }
     return;
   }
@@ -679,9 +687,10 @@ document.addEventListener("click", async e => {
     t.disabled = false; t.textContent = old; return;
   }
   if (t.dataset.stop) {
-    t.disabled = true; t.textContent = "Stopping…";
-    try { await api(`/api/sessions/${encodeURIComponent(t.dataset.stop)}/stop`, {}); toast("Stopped"); refresh(); }
-    catch (err) { toast("Stop failed: " + err.message, 6000); }
+    const force = e.shiftKey || e.altKey;
+    t.disabled = true; t.textContent = force ? "Stopping…" : "Wrapping…";
+    try { const r = await api(`/api/sessions/${encodeURIComponent(t.dataset.stop)}/stop`, { force }); toast(r.pending ? "Wrapping up first, then it stops itself" : "Stopped", 5000); refresh(); }
+    catch (err) { toast("Stop failed: " + err.message + " — Shift-click Stop to force", 8000); t.disabled = false; t.textContent = "Stop"; }
   }
 });
 $("#sq").addEventListener("input", renderStatus);
@@ -699,11 +708,8 @@ async function refresh() {
     S.sessions = sessions; renderStatus(); checkAlerts();
     $("#refreshed").textContent = "updated " + new Date().toLocaleTimeString([], {hour: "2-digit", minute: "2-digit", second: "2-digit"});
     if (S.drawer?.kind === "session" && S.drawer.tab === "overview") renderDrawer();
-    for (const id of Object.keys(EXITING)) {
-      const s = sessions.find(x => x.id === id);
-      if (!s) delete EXITING[id];
-      else if (s.finished && EXITING[id] === "wrapping") finishExit(id);
-    }
+    for (const id of Object.keys(EXITING)) if (!sessions.find(x => x.id === id)) { delete EXITING[id]; toast("Wrapped up, exited and closed"); }
+    if (S.drawer?.kind === "session" && !sessions.find(x => x.id === S.drawer.id)) { killTerm(); closeDrawer(); }   // closed (rm'd) underneath us
     if (S.drawer?.kind === "session" && S.drawer.tab === "terminal") {   // no re-render (it would kill the xterm): just reveal Close
       const s = sessions.find(x => x.id === S.drawer.id), b = $("#termclose");
       if (b) b.style.display = s && s.finished ? "" : "none";

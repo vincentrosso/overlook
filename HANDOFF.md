@@ -1,7 +1,7 @@
 # Overlook handoff
 
 Local web dashboard for Claude Code agents, built as a Conductor replacement.
-v0.7.9, branch `main`, public repo `vincentrosso/overlook`.
+v0.8.0, branch `main`, public repo `vincentrosso/overlook`.
 
 ## Layout
 
@@ -10,7 +10,7 @@ v0.7.9, branch `main`, public repo `vincentrosso/overlook`.
   `sudo scripts/port80.sh` adds a persistent pf `rdr` so `http://overlook.localhost` works too (a user
   process can't bind :80 on macOS — tested, EACCES — and the LaunchAgent must not run as root). Run `python3 overlook.py --open`.
 - `web/index.html`: the whole UI (vanilla JS, polls every 4s).
-- `scripts/install-launchd.sh`: run at login (`--uninstall` removes it).
+- `scripts/install-launchd.sh`: run at login (`--uninstall` removes it). **Installed and KeepAlive:** `pkill -f overlook.py` restarts it on the new code; log `~/Library/Logs/overlook.log`.
 - `~/.config/overlook/settings.json`: per-agent default models and per-session auto-yes.
 
 ## Where the data comes from
@@ -50,6 +50,28 @@ Config dir here is `~/.claude-home`, not `~/.claude`.
   AppleScript trap: `tell X to tell Y` followed by a block body mis-parses (-10006) — `_se()` sends
   each statement as its own complete one-liner. `_term_windows[jid]` = pid of the session's window;
   ↗ App raises that window if the process is still alive instead of opening another (the "doubling").
+- **Grid = the dashboard's grid (v0.8.0):** the page POSTs `/api/layout {cols, ids}` whenever its card
+  grid changes (column count from `gridTemplateColumns`, ids in card order; debounced on resize), and
+  `window_slot` gives a session's terminal window the cell its card has (rows = ceil(n/cols), capped 4;
+  past the grid stacks on the last cell). A changed layout runs `retile()` over `_term_windows`, so
+  the open windows follow the cards. Before any layout is posted the old lowest-free 2x2/3x2 +
+  `settings.slots` scheme applies. `_place_window(pid, slot, tries)` is the shared mover.
+- **Working dir (v0.8.0):** `transcript_info` keeps the latest tool path (`tool_dir`: file_path/path/
+  cwd, or the last `cd /abs` in a Bash command) and `project_of` maps it to the project folder (child
+  of an `OVERLOOK_ROOTS` root, else nearest `.git`). Served as `work`; the card shows `poker-history →
+  overlook` when it differs from the launch cwd, the drawer header shows it, and the Ghostty/iTerm
+  window title is `<name> · <project>`. Background jobs now read their transcript too (mtime-cached).
+- **Everything that closes a session wraps first (v0.8.0):** `close_session` on a LIVE background
+  session types `/wrape` (skipped if `settings.wrapped[id]` is <30 min old, e.g. the term tab just
+  typed it), records it in `_pending_close`, returns **202 `{pending:"wrapping"}`**, and
+  `pending_close_loop` (5s) `claude rm`s it once the daemon is gone — after 20 min still alive it
+  stops then rms, so a Close is never silently dropped. Dead sessions rm at once (200). Interactive
+  ones are refused (409). Cards show `closing` as a disabled "Closing — wrapping up first…" and hide
+  the actions. `stop_session` does the same wrap-first dance (202) unless `{force:true}` — the UI's
+  Stop button sends force on **Shift/Alt-click** — or the session is dead/just wrapped (<10 min).
+  ⏻ Exit on the term tab is now: type `/wrape` into the live xterm, then `/close`; `finishExit` is gone,
+  `refresh()` just drops the drawer and toasts when the card disappears. `close-finished` returns
+  `closed` / `wrapping` / `failed`.
 - **URL = state (v0.7.6):** `#status`, `#hub`, `#s/<id>/<tab>`, `#a/<agent>`; `syncHash()` on
   open/close/tab, `openFromHash()` after the first sessions load. `replaceState`, not `location.hash=`,
   so Back isn't flooded.
