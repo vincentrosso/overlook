@@ -66,6 +66,7 @@ kbd { font: 11px var(--mono); color: var(--faint); border: 1px solid var(--line)
 .card h3 input.rename { font: inherit; background: var(--panel2); color: var(--ink); border: 1px solid var(--accent); border-radius: 6px; padding: 2px 6px; min-width: 0; flex: 1; }
 .card p { margin: 6px 0 10px; color: var(--dim); font-size: 13px; display: -webkit-box;
   -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; min-height: 3.9em; }
+.card .term { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin: -4px 0 8px; }
 .meta { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; font-size: 11.5px; color: var(--faint); }
 .cwd .work { color: var(--input); }
 .cwd { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13.5px; color: var(--dim); margin: -2px 0 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; direction: rtl; text-align: left; }
@@ -298,6 +299,7 @@ function renderStatus() {
       ${s.closing ? `<div style="margin:2px 0 10px"><button class="big" disabled>Closing — wrapping up first…</button></div>` : ""}
       ${s.alive && !s.finished && !s.closing ? `<div style="margin:2px 0 10px;display:flex;gap:6px;flex-wrap:wrap;align-items:center">${c === "input" && s.kind !== "interactive" ? `<button class="big primary" data-yes="${esc(s.id)}">✔ Yes / Go</button>` : ""}${s.kind !== "interactive" ? `<button class="big" data-wrap="${esc(s.id)}" title="Send /wrape: wrap up, then exit">⏏ Wrap</button>` : ""}<button class="big" data-open="${esc(s.id)}" title="${s.kind === "interactive" ? "Bring your terminal app forward" : "Attach in a new terminal window (tiled + colour-coded)"}">↗ App</button>${s.autoYes ? `<span class="hint">auto-yes on</span>` : ""}</div>` : ""}
       ${s.finished && !s.closing ? `<div style="margin:2px 0 10px"><button class="big ${s.wrapped ? "primary" : ""}" data-closesess="${esc(s.id)}" title="Stop if needed, then claude rm: delete this session and its worktree, remove the card">✕ Close${s.wrapped ? " — wrapped up" : ""}</button></div>` : ""}
+      ${s.alive && s.kind !== "interactive" && s.term_line ? `<div class="term hint mono" title="${esc(s.term_line)}">${esc(s.term_line)}</div>` : ""}
       <div class="meta">
         ${s.autoYes ? `<span class="tag" style="color:var(--done)">auto-yes</span>` : ""}
         ${s.kind === "interactive" ? `<span class="tag" style="color:var(--input)">terminal</span>` : ""}

@@ -37,6 +37,9 @@ Config dir here is `~/.claude-home`, not `~/.claude`.
   typed command, not the highlighted suggestion. Overlook does NOT stop the job: `/wrape`'s
   own last step is `claude stop` on itself, after the wrap report is written. Refused (409)
   when `yes_plan` sees a permission/menu prompt, because the keys would land in the picker.
+- **Live terminal line on cards (`term_line`):** `term_line_loop` runs `claude logs` per alive background
+  job every ~3s (sequential, 30s backoff on error, paused when no browser has hit `/api/sessions` for 15s),
+  keeps the spinner/status row (or last real output line) in `_term_lines`; `sessions()` just reads it.
 - **Colour + window grid (v0.7):** `session_color(jid)` = md5 of the id into `PALETTE`, overridable
   via `settings.colors[id]` (`POST …/color` cycles). `open_session` paints the real window with
   OSC 2 (title) + OSC 11 (background = `tint(color)`) + iTerm's OSC 6 tab colour, and Ghostty also

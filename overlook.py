@@ -468,6 +468,7 @@ def sessions() -> list[dict]:
         v["wrapped"] = bool(st_.get("wrapped", {}).get(v["id"]))
         v["finished"] = is_finished(v)
         v["closing"] = v["id"] in _pending_close
+        v["term_line"] = _term_lines.get(v["id"], "") if v.get("alive") else ""
         v.setdefault("work", v.get("cwd", ""))
         try:
             v["progress"] = progress_for(Path(v["dir"]) if v.get("dir") else None,
@@ -700,6 +701,69 @@ def screen_text(jid: str) -> str:
     t = ANSI_RE.sub("\n", out)
     lines = [" ".join(l.split()) for l in t.splitlines() if l.strip()]
     return "\n".join(lines[-60:])
+
+
+# One live line per background session for its card: the spinner/status row of its
+# screen ("✻ Thinking… (12s · esc to interrupt)", "⏺ Bash(…)"), else the last meaningful
+# line above the input box. Polled by one thread, sequentially, only while a browser is
+# actually looking (`claude logs` spawns node, ~0.8s each; several jobs share this laptop).
+_term_lines: dict[str, str] = {}
+_term_backoff: dict[str, float] = {}
+_term_viewed = {"at": 0.0}
+TERM_SGR_RE = re.compile(r"\x1b\[[0-9;]*m")
+TERM_COL_RE = re.compile(r"\x1b\[[0-9;]*[CG]")
+TERM_HINT_RE = re.compile(r"for shortcuts|bypass permissions|shift\+tab|ctrl\+|esc to cancel", re.I)
+TERM_WORD_RE = re.compile(r"[A-Za-z]{2}")
+SPINNERS = "✻✽✶✳✢·∗⏺"
+
+
+def term_line(jid: str) -> str:
+    # `claude logs` is a raw pty replay drawn as DIFFS: every redraw starts with cursor-home
+    # (ESC[H), and a spinner tick rewrites one digit, so the last 60 cleaned lines are mostly
+    # "7", "8", "9". Colours are dropped, column moves become spaces (a word-by-word rewrite
+    # of one row reads back as that row), other cursor moves become line breaks, noise
+    # fragments go, then frames are walked newest-first for a spinner/status row.
+    code, out = run_claude(["logs", jid], timeout=20, jid=jid)
+    if code:
+        raise RuntimeError(out.strip()[:120] or f"exit {code}")
+    lines: list[str] = []
+    for frame in reversed(re.split(r"\x1b\[(?:1;1)?H", out)):
+        t = ANSI_RE.sub("\n", TERM_COL_RE.sub(" ", TERM_SGR_RE.sub("", frame))).replace("\r", "\n")
+        ls = [" ".join(l.split()) for l in t.splitlines() if len(l.strip()) >= 4 and TERM_WORD_RE.search(l)]
+        for l in reversed(ls):
+            if len(l) >= 10 and ("esc to interrupt" in l or l[0] in SPINNERS):
+                return l
+        lines = ls + lines
+        if len(lines) >= 40:
+            break
+    for l in reversed(lines):                      # no spinner up: last real line of output
+        if l[0] not in "─│╭╮╰╯❯>" and not TERM_HINT_RE.search(l):
+            return l
+    return ""
+
+
+def term_line_loop():
+    while True:
+        time.sleep(3)
+        if time.time() - _term_viewed["at"] > 15:   # no open dashboard: don't spend the CPU
+            continue
+        try:
+            for s_ in sessions():
+                jid = s_["id"]
+                if not s_.get("alive") or s_.get("kind") != "background":
+                    _term_lines.pop(jid, None)
+                    continue
+                if _term_backoff.get(jid, 0) > time.time():
+                    continue
+                try:
+                    line = term_line(jid)
+                    if line:
+                        _term_lines[jid] = line
+                except Exception as e:
+                    _term_backoff[jid] = time.time() + 30
+                    log(f"term line {jid}: {e!r}")
+        except Exception as e:
+            log(f"term line loop error: {e!r}")
 
 
 def yes_plan(screen: str) -> tuple[str, bytes]:
@@ -1346,6 +1410,7 @@ class Handler(BaseHTTPRequestHandler):
             if m and ID_RE.match(m.group(1)):
                 return self._ws_terminal(m.group(1), q)
             if p == "/api/sessions":
+                _term_viewed["at"] = time.time()
                 return self._send(200, {"sessions": sessions(), "now": time.time()})
             if p == "/api/agents":
                 return self._send(200, {"agents": agents()})
@@ -1485,6 +1550,7 @@ def main():
     log(f"claude: {claude_bin() or 'NOT FOUND'}")
     threading.Thread(target=auto_yes_loop, daemon=True).start()
     threading.Thread(target=pending_close_loop, daemon=True).start()
+    threading.Thread(target=term_line_loop, daemon=True).start()
     if a.app:
         threading.Timer(0.5, lambda: open_app_window(url)).start()
     elif a.open:
