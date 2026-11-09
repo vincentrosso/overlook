@@ -717,6 +717,12 @@ TERM_WORD_RE = re.compile(r"[A-Za-z]{2}")
 SPINNERS = "✻✽✶✳✢·∗⏺"
 
 
+def _whole_row(l: str) -> bool:
+    """A diff redraw repaints only the TAIL of the status row after its timer ticks ("· thinking)",
+    "ought for 24s)"); the whole row starts "<glyph> Capitalised…" and has balanced parentheses."""
+    return l.count("(") == l.count(")") and (l[0] not in SPINNERS or (l[1:2] == " " and l[2:3].isupper()))
+
+
 def term_line(jid: str) -> str:
     # `claude logs` is a raw pty replay drawn as DIFFS: every redraw starts with cursor-home
     # (ESC[H), and a spinner tick rewrites one digit, so the last 60 cleaned lines are mostly
@@ -731,13 +737,13 @@ def term_line(jid: str) -> str:
         t = ANSI_RE.sub("\n", TERM_COL_RE.sub(" ", TERM_SGR_RE.sub("", frame))).replace("\r", "\n")
         ls = [" ".join(l.split()) for l in t.splitlines() if len(l.strip()) >= 4 and TERM_WORD_RE.search(l)]
         for l in reversed(ls):
-            if len(l) >= 10 and ("esc to interrupt" in l or l[0] in SPINNERS):
+            if len(l) >= 10 and ("esc to interrupt" in l or l[0] in SPINNERS) and _whole_row(l):
                 return l
         lines = ls + lines
         if len(lines) >= 40:
             break
     for l in reversed(lines):                      # no spinner up: last real line of output
-        if l[0] not in "─│╭╮╰╯❯>" and not TERM_HINT_RE.search(l):
+        if l[0] not in "─│╭╮╰╯❯>" and not TERM_HINT_RE.search(l) and _whole_row(l):
             return l
     return ""
 
