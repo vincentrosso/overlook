@@ -53,6 +53,9 @@ Config dir here is `~/.claude-home`, not `~/.claude`.
   AppleScript trap: `tell X to tell Y` followed by a block body mis-parses (-10006) — `_se()` sends
   each statement as its own complete one-liner. `_term_windows[jid]` = pid of the session's window;
   ↗ App raises that window if the process is still alive instead of opening another (the "doubling").
+- **⊞ Align (v0.8.1):** header button → `POST /api/align {cols, ids}`: sizes the dashboard's Chrome window
+  (System Events, window named "Overlook") to the screen's visible frame and `retile()`s every open terminal
+  window on demand — the layout POST only re-tiles on a CHANGE, so dragged windows never snapped back before.
 - **Grid = the dashboard's grid (v0.8.0):** the page POSTs `/api/layout {cols, ids}` whenever its card
   grid changes (column count from `gridTemplateColumns`, ids in card order; debounced on resize), and
   `window_slot` gives a session's terminal window the cell its card has (rows = ceil(n/cols), capped 4;
