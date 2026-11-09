@@ -438,7 +438,7 @@ async function renderDrawer() {
     const s = S.sessions.find(x => x.id === d.id); if (!s) return;
     const c = stClass(s.state);
     $("#dhd").innerHTML = `<div><h2><span class="dot" style="background:${esc(s.color)};margin-right:8px"></span>${esc(s.name)}</h2><span class="pill st-${c}">${esc(s.state)}</span> <span class="hint mono">${esc(s.id)}</span> <span class="hint mono" title="${esc(s.work || s.cwd)}">${esc(shortPath(s.work || s.cwd))}</span></div>
-      <button class="btn x" data-close>✕</button>`;
+      `;
     // one view per kind: a background session is its terminal (the card already shows status/ask/folder/tokens);
     // a terminal-app session has no `claude attach`, so it gets the overview
     d.tab = s.kind === "interactive" ? "overview" : "terminal";
