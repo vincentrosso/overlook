@@ -32,7 +32,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
-VERSION = "0.7.9"
+VERSION = "0.8.0"
 HOME = Path.home()
 WEB = Path(__file__).resolve().parent / "web"
 ID_RE = re.compile(r"^[A-Za-z0-9_-]{4,64}$")
@@ -295,6 +295,42 @@ def registry() -> list[dict]:
 _tx_cache: dict = {}
 
 
+_CD_RE = re.compile(r"(?:^|&&|;|\|\|)\s*cd\s+(?:--\s+)?['\"]?(/[^\s'\";&|]+)")
+
+
+def tool_dir(inp: dict) -> str | None:
+    """Directory a tool call touched: file_path/path/cwd of Read/Edit/Write/Glob/Grep, or the
+    last `cd /abs/path` in a Bash command. Absolute paths only; relative ones say nothing new."""
+    for k in ("cwd", "file_path", "path", "notebook_path"):
+        v = inp.get(k)
+        if isinstance(v, str) and v.startswith("/"):
+            return v if (k == "cwd" or k == "path") else str(Path(v).parent)
+    cmd = inp.get("command")
+    if isinstance(cmd, str):
+        hits = _CD_RE.findall(cmd)
+        if hits:
+            return hits[-1].rstrip("/")
+    return None
+
+
+def project_of(path: str | None) -> str | None:
+    """Project folder for a path: the child of a project root it sits under, else the nearest git
+    root, else the path itself. Returned as the full directory."""
+    if not path:
+        return None
+    for r in os.environ.get("OVERLOOK_ROOTS", str(HOME / "Dropbox" / "development")).split(":"):
+        rp = str(Path(r).expanduser()).rstrip("/") + "/"
+        if path.startswith(rp):
+            rest = path[len(rp):].split("/")
+            if rest and rest[0]:
+                return rp + rest[0]
+    p = Path(path)
+    for q in [p, *p.parents]:
+        if (q / ".git").exists():
+            return str(q)
+    return path
+
+
 def transcript_info(config: str, session_id: str) -> dict:
     """Title, latest ask, last reply and activity from a session transcript.
     Reads only the tail; cached on mtime."""
@@ -307,6 +343,7 @@ def transcript_info(config: str, session_id: str) -> dict:
     if c and c[0] == mtime:
         return c[1]
     info: dict = {"mtime": mtime}
+    work_at = None
     with open(f, "rb") as fh:
         size = fh.seek(0, 2)
         fh.seek(max(0, size - 1_500_000))
@@ -334,6 +371,11 @@ def transcript_info(config: str, session_id: str) -> dict:
                          if isinstance(x, dict) and x.get("type") == "text" and x.get("text")), None)
             if text:
                 info["reply"] = " ".join(text.split())[:300]
+            for x in msg.get("content") or []:          # the dir a session is REALLY in = its latest tool path
+                if isinstance(x, dict) and x.get("type") == "tool_use":
+                    d = tool_dir(x.get("input") or {})
+                    if d:
+                        info["work"], work_at = d, r.get("timestamp")
             u = msg.get("usage") or {}
             info["tokens"] = sum(u.get(k) or 0 for k in ("input_tokens", "output_tokens",
                                  "cache_read_input_tokens", "cache_creation_input_tokens"))
@@ -377,6 +419,9 @@ def sessions() -> list[dict]:
                 "children": st.get("children"),
                 "dir": str(jd),
             }
+            if st.get("sessionId"):
+                tx = transcript_info(str(cdir), st["sessionId"])
+                seen[jid]["work"] = project_of(tx.get("work")) or seen[jid]["cwd"]
     # Live processes with no readable job: interactive terminals, plus jobs
     # that have not written state.json yet.
     by_sid = {v.get("sessionId"): v for v in seen.values()}
@@ -400,7 +445,7 @@ def sessions() -> list[dict]:
             "agent": r.get("agent") or "claude", "pid": r.get("pid"), "alive": True,
             "createdAt": _ms_iso(r.get("startedAt")), "updatedAt": updated,
             "cliVersion": r.get("version"), "sessionId": sid, "mode": tx.get("mode"),
-            "dir": None,
+            "dir": None, "work": project_of(tx.get("work")) or r.get("cwd", ""),
         }
     # Sessions the CLI knows about that have no job folder we can read.
     for jid, row in live.items():
@@ -422,6 +467,9 @@ def sessions() -> list[dict]:
         v["color"] = session_color(v["id"], st_)
         v["wrapped"] = bool(st_.get("wrapped", {}).get(v["id"]))
         v["finished"] = is_finished(v)
+        v["closing"] = v["id"] in _pending_close
+        v["term_line"] = _term_lines.get(v["id"], "") if v.get("alive") else ""
+        v.setdefault("work", v.get("cwd", ""))
         try:
             v["progress"] = progress_for(Path(v["dir"]) if v.get("dir") else None,
                                          v.get("detail") or "", v.get("updatedAt"))
@@ -655,6 +703,69 @@ def screen_text(jid: str) -> str:
     return "\n".join(lines[-60:])
 
 
+# One live line per background session for its card: the spinner/status row of its
+# screen ("✻ Thinking… (12s · esc to interrupt)", "⏺ Bash(…)"), else the last meaningful
+# line above the input box. Polled by one thread, sequentially, only while a browser is
+# actually looking (`claude logs` spawns node, ~0.8s each; several jobs share this laptop).
+_term_lines: dict[str, str] = {}
+_term_backoff: dict[str, float] = {}
+_term_viewed = {"at": 0.0}
+TERM_SGR_RE = re.compile(r"\x1b\[[0-9;]*m")
+TERM_COL_RE = re.compile(r"\x1b\[[0-9;]*[CG]")
+TERM_HINT_RE = re.compile(r"for shortcuts|bypass permissions|shift\+tab|ctrl\+|esc to cancel", re.I)
+TERM_WORD_RE = re.compile(r"[A-Za-z]{2}")
+SPINNERS = "✻✽✶✳✢·∗⏺"
+
+
+def term_line(jid: str) -> str:
+    # `claude logs` is a raw pty replay drawn as DIFFS: every redraw starts with cursor-home
+    # (ESC[H), and a spinner tick rewrites one digit, so the last 60 cleaned lines are mostly
+    # "7", "8", "9". Colours are dropped, column moves become spaces (a word-by-word rewrite
+    # of one row reads back as that row), other cursor moves become line breaks, noise
+    # fragments go, then frames are walked newest-first for a spinner/status row.
+    code, out = run_claude(["logs", jid], timeout=20, jid=jid)
+    if code:
+        raise RuntimeError(out.strip()[:120] or f"exit {code}")
+    lines: list[str] = []
+    for frame in reversed(re.split(r"\x1b\[(?:1;1)?H", out)):
+        t = ANSI_RE.sub("\n", TERM_COL_RE.sub(" ", TERM_SGR_RE.sub("", frame))).replace("\r", "\n")
+        ls = [" ".join(l.split()) for l in t.splitlines() if len(l.strip()) >= 4 and TERM_WORD_RE.search(l)]
+        for l in reversed(ls):
+            if len(l) >= 10 and ("esc to interrupt" in l or l[0] in SPINNERS):
+                return l
+        lines = ls + lines
+        if len(lines) >= 40:
+            break
+    for l in reversed(lines):                      # no spinner up: last real line of output
+        if l[0] not in "─│╭╮╰╯❯>" and not TERM_HINT_RE.search(l):
+            return l
+    return ""
+
+
+def term_line_loop():
+    while True:
+        time.sleep(3)
+        if time.time() - _term_viewed["at"] > 15:   # no open dashboard: don't spend the CPU
+            continue
+        try:
+            for s_ in sessions():
+                jid = s_["id"]
+                if not s_.get("alive") or s_.get("kind") != "background":
+                    _term_lines.pop(jid, None)
+                    continue
+                if _term_backoff.get(jid, 0) > time.time():
+                    continue
+                try:
+                    line = term_line(jid)
+                    if line:
+                        _term_lines[jid] = line
+                except Exception as e:
+                    _term_backoff[jid] = time.time() + 30
+                    log(f"term line {jid}: {e!r}")
+        except Exception as e:
+            log(f"term line loop error: {e!r}")
+
+
 def yes_plan(screen: str) -> tuple[str, bytes]:
     tail = screen[-2500:].lower()
     if "don't ask again" in tail or "don\u2019t ask again" in tail:
@@ -755,27 +866,94 @@ def is_finished(s: dict) -> bool:
     return bool(FINISHED_RE.search(st)) and not BUSY_RE.search(st)
 
 
-def close_session(jid: str) -> tuple[int, dict]:
-    """Stop (if the daemon is still up) then `claude rm`: delete the session and its worktree
-    when safe, then forget everything Overlook kept about it. Refused while it is busy."""
-    s_ = next((x for x in sessions() if x["id"] == jid), None)
-    if s_ and s_.get("alive") and not is_finished(s_):
-        return 409, {"ok": False, "error": "still working — Stop or Wrap it first"}
-    if s_ and s_.get("alive"):
-        run_claude(["stop", jid], timeout=30, jid=jid)      # finished but the daemon lingers
-    code, out = run_claude(["rm", jid], timeout=60, jid=jid)
-    out = out.strip()
-    if code != 0:
-        log(f"close {jid} failed: {out[-300:]}")
-        return 409, {"ok": False, "error": out[-600:] or f"claude rm exited {code}"}
+_pending_close: dict[str, float] = {}   # session id -> epoch Close was asked; rm'd by pending_close_loop once it exits
+
+
+def _forget(jid: str) -> None:
     with _settings_lock:
         st = load_settings()
         for k in ("names", "colors", "slots", "wrapped", "autoYes"):
             st[k].pop(jid, None)
         save_settings(st)
+
+
+def _rm(jid: str) -> tuple[int, dict]:
+    """`claude rm`: delete the session and its worktree when safe, then forget what Overlook kept."""
+    code, out = run_claude(["rm", jid], timeout=60, jid=jid)
+    out = out.strip()
+    if code != 0:
+        log(f"close {jid} failed: {out[-300:]}")
+        return 409, {"ok": False, "error": out[-600:] or f"claude rm exited {code}"}
+    _forget(jid)
+    _pending_close.pop(jid, None)
     _live_cache["at"] = 0
     log(f"close {jid}")
     return 200, {"ok": True, "output": out}
+
+
+def _wrapped_recently(jid: str, within: float = 1800) -> bool:
+    return time.time() - (load_settings().get("wrapped", {}).get(jid) or 0) < within
+
+
+def close_session(jid: str) -> tuple[int, dict]:
+    """Anything that closes a session wraps it first. Dead already: `claude rm` now. Alive: type
+    /wrape (unless it was wrapped in the last 30 min), remember the id, and pending_close_loop
+    rm's it once the daemon has exited (/wrape's last step is `claude stop` on itself)."""
+    s_ = next((x for x in sessions() if x["id"] == jid), None)
+    if not s_ or not s_.get("alive"):
+        return _rm(jid)
+    if s_.get("kind") == "interactive":
+        return 409, {"ok": False, "error": "a terminal session — wrap and exit it from its own window"}
+    if jid in _pending_close:
+        return 202, {"ok": True, "pending": "wrapping", "note": "already closing"}
+    if not _wrapped_recently(jid):
+        res = poke(jid, "close", text=WRAP_TEXT)
+        if not res.get("ok"):
+            return 409, {"ok": False, "error": res.get("error") or "couldn't type /wrape into it"}
+        mark_wrapped(jid)
+    _pending_close[jid] = time.time()
+    log(f"close {jid}: wrapping first, rm when it exits")
+    return 202, {"ok": True, "pending": "wrapping"}
+
+
+def stop_session(jid: str, force: bool = False) -> tuple[int, dict]:
+    """Stop wraps first too: /wrape ends with `claude stop` on itself. `force` is the old raw stop,
+    for a session that is hung or ignoring its input."""
+    s_ = next((x for x in sessions() if x["id"] == jid), None)
+    if force or not s_ or not s_.get("alive") or _wrapped_recently(jid, 600):
+        log(f"stop {jid}{' (force)' if force else ''}")
+        code, out = run_claude(["stop", jid], timeout=30, jid=jid)
+        _live_cache["at"] = 0
+        return (200 if code == 0 else 500), {"ok": code == 0, "output": out.strip()}
+    res = poke(jid, "stop", text=WRAP_TEXT)
+    if not res.get("ok"):
+        return 409, {"ok": False, "error": res.get("error") or "couldn't type /wrape into it — Stop again with force"}
+    mark_wrapped(jid)
+    log(f"stop {jid}: wrapping first")
+    return 202, {"ok": True, "pending": "wrapping"}
+
+
+def pending_close_loop():
+    """rm each pending session once its daemon is gone. A session that is still alive after 20 min
+    gets a plain stop, then rm (the wrap hung or was ignored); the Close is never just forgotten."""
+    while True:
+        time.sleep(5)
+        if not _pending_close:
+            continue
+        try:
+            _live_cache["at"] = 0
+            live = {s["id"]: s for s in sessions()}
+            for jid, since in list(_pending_close.items()):
+                s_ = live.get(jid)
+                if s_ and s_.get("alive") and time.time() - since < 1200:
+                    continue
+                if s_ and s_.get("alive"):
+                    log(f"close {jid}: still alive after 20 min — stopping")
+                    run_claude(["stop", jid], timeout=30, jid=jid)
+                _rm(jid)
+                _pending_close.pop(jid, None)      # a failed rm is logged; don't retry every 5s
+        except Exception as e:
+            log(f"pending close: {e!r}")
 
 
 def auto_yes_loop():
@@ -844,24 +1022,61 @@ def screen_frame() -> tuple[int, int, int, int] | None:
     return frame
 
 
+_layout: dict = {"cols": 0, "ids": [], "at": 0.0}   # the dashboard's card grid, POSTed by the page whenever it changes
+
+
+def set_layout(body: dict) -> tuple[int, dict]:
+    """The page reports its card grid: column count and the visible session ids in card order.
+    Terminal windows take the same cell their card has; a changed order re-tiles the open ones."""
+    ids = [str(i) for i in (body.get("ids") or []) if isinstance(i, str) and ID_RE.match(i)][:64]
+    cols = int(body.get("cols") or 0)
+    if not ids or cols < 1:
+        return 400, {"ok": False, "error": "need cols and ids"}
+    changed = (ids, cols) != (_layout["ids"], _layout["cols"])
+    _layout.update(ids=ids, cols=cols, at=time.time())
+    if changed and _term_windows:
+        threading.Thread(target=retile, daemon=True).start()
+    return 200, {"ok": True, "changed": changed}
+
+
 def window_slot(jid: str, st: dict) -> tuple[int, int, int, int] | None:
-    """Pick a grid cell for this session's terminal window: its previous one if it had one,
-    else the lowest cell not held by another live session. 2x2, or 3x2 on wide screens."""
+    """Grid cell for this session's terminal window = the cell its card has on the dashboard
+    (same column count, same order). Before the page has reported a layout: the old scheme,
+    lowest free cell of a 2x2 / 3x2, remembered in settings.slots."""
     frame = screen_frame()
     if not frame:
         return None
     x0, y0, w, h = frame
-    cols, rows = (3 if w >= 2400 else 2), 2
-    slots = st.setdefault("slots", {})
-    live = {s["id"] for s in sessions() if s.get("alive")}
-    for k in [k for k in slots if k not in live and k != jid]:
-        slots.pop(k)
-    if jid not in slots:
-        taken = set(slots.values())
-        slots[jid] = next((i for i in range(cols * rows) if i not in taken), len(slots) % (cols * rows))
-    i = slots[jid] % (cols * rows)
+    if jid in _layout["ids"]:
+        cols = max(1, min(_layout["cols"], 6))
+        rows = max(1, min(-(-len(_layout["ids"]) // cols), 4))
+        i = _layout["ids"].index(jid)
+        if i >= cols * rows:                      # past the visible grid: stack on the last cell
+            i = cols * rows - 1
+    else:
+        cols, rows = (3 if w >= 2400 else 2), 2
+        slots = st.setdefault("slots", {})
+        live = {s["id"] for s in sessions() if s.get("alive")}
+        for k in [k for k in slots if k not in live and k != jid]:
+            slots.pop(k)
+        if jid not in slots:
+            taken = set(slots.values())
+            slots[jid] = next((i for i in range(cols * rows) if i not in taken), len(slots) % (cols * rows))
+        i = slots[jid] % (cols * rows)
     cw, ch = w // cols, h // rows
     return (x0 + (i % cols) * cw, y0 + (i // cols) * ch, cw, ch)
+
+
+def retile() -> None:
+    """Move every terminal window Overlook opened to the cell its card now occupies."""
+    alive = _ghostty_pids()
+    for jid, pid in list(_term_windows.items()):
+        if pid not in alive:
+            _term_windows.pop(jid, None)
+            continue
+        slot = window_slot(jid, load_settings())
+        if slot:
+            _place_window(pid, slot, tries=6)
 
 
 def _ghostty_pids() -> set[int]:
@@ -904,11 +1119,14 @@ def _track_new_ghostty(jid: str, before: set[int], slot: tuple[int, int, int, in
     if pid is None:
         log("ghostty: no new process"); return
     _term_windows[jid] = pid
-    if not slot:
-        return
+    if slot:
+        _place_window(pid, slot)
+
+
+def _place_window(pid: int, slot: tuple[int, int, int, int], tries: int = 25) -> None:
     x, y, w, h = slot
     r = None
-    for _ in range(25):
+    for _ in range(tries):
         r = _se(pid, f"set position of {WIN} to {{{x}, {y}}}", f"set size of {WIN} to {{{w}, {h}}}",
                 "delay 0.3", f"get (position of {WIN}) & (size of {WIN})")
         if r.returncode == 0:
@@ -958,6 +1176,9 @@ def open_session(jid: str) -> dict:
     with _settings_lock:
         st = load_settings()
         color, title = session_color(jid, st), s_["name"]
+        proj = Path(s_.get("work") or s_.get("cwd") or "").name
+        if proj and proj not in title:
+            title = f"{title} · {proj}"
         slot = window_slot(jid, st)
         save_settings(st)
     bg = tint(color)
@@ -1189,6 +1410,7 @@ class Handler(BaseHTTPRequestHandler):
             if m and ID_RE.match(m.group(1)):
                 return self._ws_terminal(m.group(1), q)
             if p == "/api/sessions":
+                _term_viewed["at"] = time.time()
                 return self._send(200, {"sessions": sessions(), "now": time.time()})
             if p == "/api/agents":
                 return self._send(200, {"agents": agents()})
@@ -1291,18 +1513,18 @@ class Handler(BaseHTTPRequestHandler):
             done, failed = [], []
             for s_ in [x for x in sessions() if x.get("finished")]:
                 code, res = close_session(s_["id"])
-                (done if code == 200 else failed).append({"id": s_["id"], "name": s_["name"], **({} if code == 200 else {"error": res.get("error")})})
-            log(f"close-finished: {len(done)} closed, {len(failed)} failed")
-            return self._send(200, {"ok": not failed, "closed": done, "failed": failed})
+                (done if code < 300 else failed).append({"id": s_["id"], "name": s_["name"], **({"pending": True} if code == 202 else {}), **({} if code < 300 else {"error": res.get("error")})})
+            pending = [x for x in done if x.pop("pending", None)]
+            log(f"close-finished: {len(done) - len(pending)} closed, {len(pending)} wrapping, {len(failed)} failed")
+            return self._send(200, {"ok": not failed, "closed": [x for x in done if x["id"] not in _pending_close], "wrapping": [x for x in done if x["id"] in _pending_close], "failed": failed})
         m = re.match(r"^/api/sessions/([^/]+)/close$", p)
         if m and ID_RE.match(m.group(1)):
             return self._send(*close_session(m.group(1)))
         m = re.match(r"^/api/sessions/([^/]+)/stop$", p)
         if m and ID_RE.match(m.group(1)):
-            log(f"stop {m.group(1)}")
-            code, out = run_claude(["stop", m.group(1)], timeout=30, jid=m.group(1))
-            _live_cache["at"] = 0
-            return self._send(200 if code == 0 else 500, {"ok": code == 0, "output": out.strip()})
+            return self._send(*stop_session(m.group(1), force=bool(body.get("force"))))
+        if p == "/api/layout":
+            return self._send(*set_layout(body))
         return self._send(404, {"error": "not found"})
 
 
@@ -1327,6 +1549,8 @@ def main():
     log(f"config dirs: {', '.join(str(d) for d in config_dirs()) or 'none found'}")
     log(f"claude: {claude_bin() or 'NOT FOUND'}")
     threading.Thread(target=auto_yes_loop, daemon=True).start()
+    threading.Thread(target=pending_close_loop, daemon=True).start()
+    threading.Thread(target=term_line_loop, daemon=True).start()
     if a.app:
         threading.Timer(0.5, lambda: open_app_window(url)).start()
     elif a.open:
