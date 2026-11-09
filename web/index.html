@@ -144,6 +144,7 @@ kbd { font: 11px var(--mono); color: var(--faint); border: 1px solid var(--line)
 .drawer .hd h2 { margin: 0 0 4px; font-size: 18px; }
 .drawer .bd { padding: 18px 22px; overflow: auto; flex: 1; }
 .drawer .x { margin-left: auto; }
+.drawer .xl { padding: 5px 9px; line-height: 1; margin-top: 2px; }   /* window close, top-left, Mac-style */
 .drawer.wide { width: min(1180px, 97vw); }
 #termbox { height: calc(100vh - 170px); min-height: 320px; background: #0b0d11; border: 1px solid var(--line); border-radius: 10px; padding: 8px; }
 #termbox { display: flex; flex-direction: column; }
@@ -439,7 +440,7 @@ async function renderDrawer() {
   if (d.kind === "session") {
     const s = S.sessions.find(x => x.id === d.id); if (!s) return;
     const c = stClass(s.state);
-    $("#dhd").innerHTML = `<div><h2><span class="dot" style="background:${esc(s.color)};margin-right:8px"></span>${esc(s.name)}</h2><span class="pill st-${c}">${esc(s.state)}</span> <span class="hint mono">${esc(s.id)}</span> <span class="hint mono" title="${esc(s.work || s.cwd)}">${esc(shortPath(s.work || s.cwd))}</span></div>
+    $("#dhd").innerHTML = `<button class="btn xl" data-close title="Close this window (Esc); the session keeps running">✕</button><div><h2><span class="dot" style="background:${esc(s.color)};margin-right:8px"></span>${esc(s.name)}</h2><span class="pill st-${c}">${esc(s.state)}</span> <span class="hint mono">${esc(s.id)}</span> <span class="hint mono" title="${esc(s.work || s.cwd)}">${esc(shortPath(s.work || s.cwd))}</span></div>
       `;
     // one view per kind: a background session is its terminal (the card already shows status/ask/folder/tokens);
     // a terminal-app session has no `claude attach`, so it gets the overview
