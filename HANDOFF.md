@@ -53,6 +53,10 @@ Config dir here is `~/.claude-home`, not `~/.claude`.
   AppleScript trap: `tell X to tell Y` followed by a block body mis-parses (-10006) — `_se()` sends
   each statement as its own complete one-liner. `_term_windows[jid]` = pid of the session's window;
   ↗ App raises that window if the process is still alive instead of opening another (the "doubling").
+- **UI telemetry (v0.8.2):** the page batches every interaction (clicks with a stable control name, DEAD clicks on
+  things that look clickable but aren't, view switches, drawer open/close + dwell, shortcuts, toasts, API errors,
+  terminal detach) to `POST /api/ui-log` → `~/.config/overlook/ui-log.jsonl` (rotates at 50 MB). `python3 scripts/ui_report.py`
+  summarises it: top controls, dead clicks, rage clicks, bounce drawers, recurring toasts/errors. Use it before changing the UI.
 - **⊞ Align (v0.8.1):** header button → `POST /api/align {cols, ids}`: sizes the dashboard's Chrome window
   (System Events, window named "Overlook") to the screen's visible frame and `retile()`s every open terminal
   window on demand — the layout POST only re-tiles on a CHANGE, so dragged windows never snapped back before.

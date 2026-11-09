@@ -32,7 +32,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
-VERSION = "0.8.1"
+VERSION = "0.8.2"
 HOME = Path.home()
 WEB = Path(__file__).resolve().parent / "web"
 ID_RE = re.compile(r"^[A-Za-z0-9_-]{4,64}$")
@@ -66,6 +66,34 @@ def save_settings(d: dict) -> None:
 
 def log(msg: str) -> None:
     print(f"[{time.strftime('%H:%M:%S')}] {msg}", flush=True)
+
+
+# UI telemetry: the page batches every interaction (clicks, dead clicks, views, drawer open/close with
+# dwell, shortcuts, toasts, API errors, terminal attach/detach) to /api/ui-log; one JSON line each.
+# Read it with scripts/ui_report.py to see how the dashboard is actually used and where it hurts.
+UI_LOG = Path(os.environ.get("OVERLOOK_UI_LOG", SETTINGS.parent / "ui-log.jsonl"))
+_ui_lock = threading.Lock()
+
+
+def ui_log(body: dict) -> tuple[int, dict]:
+    evs = body.get("events")
+    if not isinstance(evs, list):
+        return 400, {"ok": False, "error": "need events[]"}
+    sid, recv = str(body.get("sid") or "")[:12], round(time.time(), 3)
+    rows = []
+    for e in evs[:500]:
+        if isinstance(e, dict):
+            row = {k[:32]: (v if isinstance(v, (int, float, bool)) or v is None else str(v)[:300])
+                   for k, v in list(e.items())[:24]}
+            row.update(sid=sid, recv=recv)
+            rows.append(json.dumps(row, ensure_ascii=False))
+    with _ui_lock:
+        UI_LOG.parent.mkdir(parents=True, exist_ok=True)
+        if UI_LOG.exists() and UI_LOG.stat().st_size > 50_000_000:   # keep one rotated copy
+            UI_LOG.replace(UI_LOG.with_suffix(".1.jsonl"))
+        with UI_LOG.open("a", encoding="utf-8") as f:
+            f.write("".join(r + "\n" for r in rows))
+    return 200, {"ok": True, "n": len(rows)}
 
 
 # ---------------------------------------------------------------- config dirs
@@ -1565,6 +1593,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(*set_layout(body))
         if p == "/api/align":
             return self._send(*align(body))
+        if p == "/api/ui-log":
+            return self._send(*ui_log(body))
         return self._send(404, {"error": "not found"})
 
 

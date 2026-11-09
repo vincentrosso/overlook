@@ -230,12 +230,34 @@ const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt
 const api = async (path, opts) => {
   const r = await fetch(path, opts && {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(opts)});
   const j = await r.json().catch(() => ({}));
-  if (!r.ok) throw new Error(j.error || j.output || r.statusText);
+  if (!r.ok) { uilog("api-error", { path, status: r.status, err: String(j.error || j.output || r.statusText).slice(0, 160) }); throw new Error(j.error || j.output || r.statusText); }
   return j;
 };
-const toast = (msg, ms = 3500) => { const t = $("#toast"); t.textContent = msg; t.classList.add("on"); clearTimeout(t._h); t._h = setTimeout(() => t.classList.remove("on"), ms); };
+const toast = (msg, ms = 3500) => { uilog("toast", { msg: String(msg).slice(0, 160) }); const t = $("#toast"); t.textContent = msg; t.classList.add("on"); clearTimeout(t._h); t._h = setTimeout(() => t.classList.remove("on"), ms); };
 
 const S = { view: "status", sessions: [], agents: [], dirs: [], sfilter: "all", sdir: null, facets: new Set(), drawer: null };
+// ---------- UI telemetry. Every interaction is batched to /api/ui-log (→ ~/.config/overlook/ui-log.jsonl) so the
+// UI can be tuned from how it is actually used: what gets clicked, what gets clicked and does nothing, how long
+// drawers stay open, which toasts/errors recur. scripts/ui_report.py reads it. No content, only controls.
+const UI = { q: [], sid: Math.random().toString(36).slice(2, 8), opened: 0 };
+function uilog(ev, data = {}) {
+  UI.q.push({ t: Date.now(), ev, view: S.view, drawer: S.drawer ? S.drawer.kind + ":" + S.drawer.tab : null, ...data });
+  if (UI.q.length >= 25) uiflush(); else { clearTimeout(UI._h); UI._h = setTimeout(uiflush, 2000); }
+}
+function uiflush() {
+  if (!UI.q.length) return;
+  const body = JSON.stringify({ sid: UI.sid, events: UI.q.splice(0) });
+  fetch("/api/ui-log", { method: "POST", headers: { "Content-Type": "application/json" }, body, keepalive: true }).catch(() => {});
+}
+// what was clicked, as a stable name: #id, or the first data-* action + its value, or the tag + text
+function uidesc(el) {
+  const k = Object.keys(el.dataset || {})[0];
+  return { ctl: el.id ? "#" + el.id : k ? k + (el.dataset[k] && k !== "close" ? "=" + String(el.dataset[k]).slice(0, 24) : "") : el.tagName.toLowerCase(),
+           text: (el.textContent || "").trim().replace(/\s+/g, " ").slice(0, 40) };
+}
+addEventListener("pagehide", uiflush);
+document.addEventListener("visibilitychange", () => { uilog("visibility", { state: document.visibilityState }); if (document.hidden) uiflush(); });
+addEventListener("load", () => uilog("load", { w: innerWidth, h: innerHeight, dpr: devicePixelRatio, hash: location.hash.slice(0, 40) }));
 
 // ---------- helpers
 const stClass = st => {
@@ -363,10 +385,11 @@ function renderHub() {
 // ---------- drawer
 function openDrawer(kind, id, tab = null) {
   S.drawer = { kind, id, tab: tab || (kind === "session" ? "terminal" : "about") };
+  UI.opened = Date.now(); uilog("drawer-open", { kind, id, tab: S.drawer.tab });
   $("#scrim").classList.add("on"); $("#drawer").classList.add("on");
   renderDrawer(); syncHash();
 }
-function closeDrawer() { S.drawer = null; $("#scrim").classList.remove("on"); $("#drawer").classList.remove("on", "wide"); syncHash(); }
+function closeDrawer() { if (S.drawer) uilog("drawer-close", { kind: S.drawer.kind, tab: S.drawer.tab, dwell: Date.now() - UI.opened }); S.drawer = null; $("#scrim").classList.remove("on"); $("#drawer").classList.remove("on", "wide"); syncHash(); }
 // URL = state: #status | #hub | #s/<session id>/<tab> | #a/<agent id>, so a session's terminal has a link you can bookmark or reload.
 function syncHash() {
   const d = S.drawer;
@@ -431,6 +454,7 @@ function mountTerm(id, fresh = false, color = null) {
   ws.binaryType = "arraybuffer";
   ws.onmessage = e => { if (e.data instanceof ArrayBuffer) term.write(new Uint8Array(e.data)); };
   ws.onclose = () => {
+    uilog("term-close", { gone: !!gone, dwell: Date.now() - UI.opened });
     const s = S.sessions.find(x => x.id === id), gone = s && !s.alive;
     term.write(gone ? "\r\n\x1b[2m[session exited — Delete session removes it]\x1b[0m\r\n" : "\r\n\x1b[2m[detached — Reconnect to attach again; the agent is still running]\x1b[0m\r\n");
     const h = $("#termhint"); if (h) h.textContent = gone ? "Exited." : "Detached.";
@@ -521,6 +545,7 @@ function modelOpts(agentId) {
     (pick && !MODELS.includes(pick) ? `<option selected>${esc(pick)}</option>` : "");
 }
 document.addEventListener("change", async e => {
+  uilog("change", { ctl: e.target.id ? "#" + e.target.id : e.target.name || e.target.tagName.toLowerCase(), on: e.target.type === "checkbox" ? e.target.checked : undefined });
   if (e.target.id === "autoYes") {
     const id = e.target.dataset.auto, on = e.target.checked;
     try { await api(`/api/sessions/${encodeURIComponent(id)}/auto`, { on }); const x = S.sessions.find(z => z.id === id); if (x) x.autoYes = on;
@@ -618,6 +643,7 @@ function openLaunch(agentId) {
 
 // ---------- wiring
 function setView(v) {
+  if (v !== S.view) uilog("view", { to: v });
   S.view = v;
   document.querySelectorAll("[data-view]").forEach(b => b.classList.toggle("on", b.dataset.view === v));
   $("#v-status").hidden = v !== "status"; $("#v-hub").hidden = v !== "hub";
@@ -625,7 +651,12 @@ function setView(v) {
 }
 document.addEventListener("click", async e => {
   const t = e.target.closest("[data-view],[data-f],[data-d],[data-k],[data-s],[data-a],[data-launch],[data-close],[data-tab],[data-copy],[data-stop],[data-yes],[data-wrap],[data-rename],[data-termwrap],[data-termexit],[data-color],[data-closesess],[data-closeall],[data-open],[data-reterm],#newBtn,#emptyNew,#alignBtn,#scrim");
-  if (!t) return;
+  if (!t) {
+    const x = e.target.closest("button,a,.card,.pill,.tag,h2,.hint,.meta,.detail,.intent,.term,#dhd,#dbd,header");
+    if (x && !e.target.closest("#termbox,input,textarea,select,label,a[href]")) uilog("deadclick", uidesc(x));
+    return;
+  }
+  uilog("click", { ...uidesc(t), shift: e.shiftKey || undefined });
   if (t.dataset.launch) { e.stopPropagation(); return openLaunch(t.dataset.launch); }
   if (t.id === "newBtn" || t.id === "emptyNew") { e.preventDefault(); return openLaunch(); }
   if (t.id === "alignBtn") { e.preventDefault(); return alignWindows(t); }
@@ -713,6 +744,7 @@ document.addEventListener("click", async e => {
 $("#sq").addEventListener("input", renderStatus);
 $("#aq").addEventListener("input", renderHub);
 document.addEventListener("keydown", e => {
+  if (e.key === "Escape" || e.key === "/" || (e.key.toLowerCase() === "w" && e.ctrlKey && e.shiftKey)) uilog("key", { k: e.key, inTerm: !!(TERM && TERM.el.contains(document.activeElement)) });
   if (e.key === "Escape") { if (TERM && TERM.el.contains(document.activeElement)) return; return closeDrawer(); }
   if (e.key === "/" && !/INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName)) {
     e.preventDefault(); (S.view === "hub" ? $("#aq") : $("#sq")).focus();
