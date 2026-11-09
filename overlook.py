@@ -32,7 +32,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
-VERSION = "0.8.0"
+VERSION = "0.8.1"
 HOME = Path.home()
 WEB = Path(__file__).resolve().parent / "web"
 ID_RE = re.compile(r"^[A-Za-z0-9_-]{4,64}$")
@@ -1031,7 +1031,7 @@ def screen_frame() -> tuple[int, int, int, int] | None:
 _layout: dict = {"cols": 0, "ids": [], "at": 0.0}   # the dashboard's card grid, POSTed by the page whenever it changes
 
 
-def set_layout(body: dict) -> tuple[int, dict]:
+def set_layout(body: dict, tile: bool = True) -> tuple[int, dict]:
     """The page reports its card grid: column count and the visible session ids in card order.
     Terminal windows take the same cell their card has; a changed order re-tiles the open ones."""
     ids = [str(i) for i in (body.get("ids") or []) if isinstance(i, str) and ID_RE.match(i)][:64]
@@ -1040,9 +1040,41 @@ def set_layout(body: dict) -> tuple[int, dict]:
         return 400, {"ok": False, "error": "need cols and ids"}
     changed = (ids, cols) != (_layout["ids"], _layout["cols"])
     _layout.update(ids=ids, cols=cols, at=time.time())
-    if changed and _term_windows:
+    if tile and changed and _term_windows:
         threading.Thread(target=retile, daemon=True).start()
     return 200, {"ok": True, "changed": changed}
+
+
+def _place_dash(frame: tuple[int, int, int, int]) -> bool:
+    """Size the dashboard's own browser window (Chrome-family app window, or the tab in front) to the
+    screen's visible frame, so its card grid lines up with the terminal cells."""
+    x, y, w, h = frame
+    win = '(first window whose name contains "Overlook")'
+    for app in ("Google Chrome", "Brave Browser", "Microsoft Edge", "Chromium"):
+        pre = f'tell application "System Events" to tell process "{app}" to '
+        try:
+            r = subprocess.run(["osascript", "-e", pre + f"set position of {win} to {{{x}, {y}}}",
+                                "-e", pre + f"set size of {win} to {{{w}, {h}}}"], capture_output=True, text=True, timeout=10)
+        except subprocess.TimeoutExpired:
+            continue
+        if r.returncode == 0:
+            return True
+    return False
+
+
+def align(body: dict) -> tuple[int, dict]:
+    """The ⊞ Align button: take the page's current grid, size the dashboard window to the screen and
+    put every open terminal window back on its card's cell (the layout POST only re-tiles on CHANGE;
+    this does it on demand, e.g. after windows were dragged or a display came and went)."""
+    if body.get("ids"):
+        code, r = set_layout(body, tile=False)
+        if code != 200:
+            return code, r
+    _screen_cache["at"] = 0.0                 # re-read the screen: it may have changed
+    frame = screen_frame()
+    dash = _place_dash(frame) if frame else False
+    retile()
+    return 200, {"ok": True, "terminals": len(_term_windows), "dash": dash}
 
 
 def window_slot(jid: str, st: dict) -> tuple[int, int, int, int] | None:
@@ -1531,6 +1563,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(*stop_session(m.group(1), force=bool(body.get("force"))))
         if p == "/api/layout":
             return self._send(*set_layout(body))
+        if p == "/api/align":
+            return self._send(*align(body))
         return self._send(404, {"error": "not found"})
 
 
