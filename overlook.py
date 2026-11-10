@@ -1134,7 +1134,15 @@ def arrange(body: dict) -> tuple[int, dict]:
         x, y, w, h = frame
         dash = _place_dash((x, y, w - w // 2, h))
     retile()
-    return 200, {"ok": True, "terminals": len(_term_windows), "dash": dash}
+    have = len(_term_windows)
+    # every running background session gets a window on the right, not only the ones already open
+    want = [s_["id"] for s_ in sessions()
+            if s_.get("alive") and not s_.get("finished") and s_.get("kind") != "interactive" and s_["id"] not in _term_windows][:8]
+    opened = 0
+    if _terminal_app() == "Ghostty":
+        for jid in want:
+            opened += 1 if open_session(jid).get("ok") else 0
+    return 200, {"ok": True, "terminals": have, "opened": opened, "dash": dash}
 
 
 def _split_slot(jid: str, frame: tuple[int, int, int, int]) -> tuple[int, int, int, int]:
@@ -1183,8 +1191,16 @@ def window_slot(jid: str, st: dict) -> tuple[int, int, int, int] | None:
     return (x0 + (i % cols) * cw, y0 + (i // cols) * ch, cw, ch)
 
 
+_retile_lock = threading.Lock()
+
+
 def retile() -> None:
     """Move every terminal window Overlook opened to the cell its card now occupies."""
+    with _retile_lock:
+        _retile()
+
+
+def _retile() -> None:
     alive = _discover_windows()
     for jid, pid in list(_term_windows.items()):
         if pid not in alive:
@@ -1247,10 +1263,13 @@ def _track_new_ghostty(jid: str, before: set[int], slot: tuple[int, int, int, in
     pid = None
     for _ in range(40):                       # up to ~8s for the process to show up
         time.sleep(0.2)
-        new = _ghostty_pids() - before
-        if new:
-            pid = min(new)
+        _discover_windows()                   # several may open at once: the command line says whose is whose
+        pid = _term_windows.get(jid)
+        if pid:
             break
+    if pid is None:
+        new = _ghostty_pids() - before
+        pid = min(new) if new else None
     if pid is None:
         log("ghostty: no new process"); return
     _term_windows[jid] = pid

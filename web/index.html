@@ -191,7 +191,7 @@ footer { color: var(--faint); font-size: 12px; text-align: center; padding: 20px
   <span class="hint" id="refreshed"></span>
   <div class="seg">
     <button class="big" id="alignBtn" title="Line the windows up: each terminal window back on its card's cell, this window sized to the screen">⊞ Align</button>
-    <button class="big" id="arrangeBtn" title="Split the screen: this page on the left half, the terminal windows tiled on the right half. Sticks until you Align.">◧ Arrange</button>
+    <button class="big" id="arrangeBtn" title="Split the screen: this page on the left half, a terminal window for every running session tiled on the right half (opens the missing ones). Sticks until you Align.">◧ Arrange</button>
     <button class="big" id="alertBtn" title="Desktop notification + chime when a session needs you">🔕 Alerts off</button>
     <button class="big primary" id="newBtn">+ New run</button>
   </div>
@@ -357,7 +357,7 @@ async function alignWindows(btn, split = false) {
   try {
     const r = await api(split ? "/api/arrange" : "/api/align", { cols, ids });
     LAYOUT = cols + ":" + ids.join(",");
-    toast(`${split ? "Arranged" : "Aligned"} ${r.terminals} terminal window${r.terminals === 1 ? "" : "s"}` + (r.dash ? " + the dashboard" : " (dashboard window not found)"), 3500);
+    toast(`${split ? "Arranged" : "Aligned"} ${r.terminals} terminal window${r.terminals === 1 ? "" : "s"}` + (r.opened ? `, opening ${r.opened} more` : "") + (r.dash ? " + the dashboard" : " (dashboard window not found)"), 3500);
   } catch (err) { toast(`Couldn't ${split ? "arrange" : "align"}: ` + err.message, 6000); }
   btn.disabled = false;
 }
