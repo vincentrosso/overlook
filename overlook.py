@@ -717,9 +717,16 @@ def launch(body: dict) -> tuple[int, dict]:
 
 ANSI_RE = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]|\x1b\][^\x07]*\x07|\x1b[()][A-Z0-9]")
 YES_TEXT = os.environ.get("OVERLOOK_YES_TEXT", "yes, go ahead")
-# Typed by the Wrap button. /wrape = /wrap (update CLAUDE.md, notes, memory) then stop the job itself,
-# so the exit happens AFTER the wrap report is written rather than racing it from here.
-WRAP_TEXT = os.environ.get("OVERLOOK_WRAP_TEXT", "/wrape")
+# The ⏏ Wrap buttons type /wrap: update CLAUDE.md, notes and memory, and the session KEEPS RUNNING.
+# Everything that ends a session (Stop, Exit, Delete) types /wrape = /wrap, then stop the job itself, so the
+# exit happens AFTER the wrap report is written rather than racing it from here.
+WRAP_TEXT = os.environ.get("OVERLOOK_WRAP_TEXT", "/wrap")
+EXIT_TEXT = os.environ.get("OVERLOOK_EXIT_TEXT", "/wrape")
+_exit_sent: dict[str, float] = {}   # session id -> epoch /wrape was typed. A plain /wrap does not count: it never exits.
+
+
+def _exit_recently(jid: str, within: float = 1800) -> bool:
+    return time.time() - _exit_sent.get(jid, 0) < within
 _poke_locks: dict[str, threading.Lock] = {}
 _poke_log: dict[str, list[float]] = {}
 
@@ -931,7 +938,7 @@ def _wrapped_recently(jid: str, within: float = 1800) -> bool:
 
 def close_session(jid: str) -> tuple[int, dict]:
     """Anything that closes a session wraps it first. Dead already: `claude rm` now. Alive: type
-    /wrape (unless it was wrapped in the last 30 min), remember the id, and pending_close_loop
+    /wrape (unless /wrape was already typed in the last 30 min), remember the id, and pending_close_loop
     rm's it once the daemon has exited (/wrape's last step is `claude stop` on itself)."""
     s_ = next((x for x in sessions() if x["id"] == jid), None)
     if not s_ or not s_.get("alive"):
@@ -940,11 +947,11 @@ def close_session(jid: str) -> tuple[int, dict]:
         return 409, {"ok": False, "error": "a terminal session — wrap and exit it from its own window"}
     if jid in _pending_close:
         return 202, {"ok": True, "pending": "wrapping", "note": "already closing"}
-    if not _wrapped_recently(jid):
-        res = poke(jid, "close", text=WRAP_TEXT)
+    if not _exit_recently(jid):
+        res = poke(jid, "close", text=EXIT_TEXT)
         if not res.get("ok"):
             return 409, {"ok": False, "error": res.get("error") or "couldn't type /wrape into it"}
-        mark_wrapped(jid)
+        mark_wrapped(jid); _exit_sent[jid] = time.time()
     _pending_close[jid] = time.time()
     log(f"close {jid}: wrapping first, rm when it exits")
     return 202, {"ok": True, "pending": "wrapping"}
@@ -954,15 +961,15 @@ def stop_session(jid: str, force: bool = False) -> tuple[int, dict]:
     """Stop wraps first too: /wrape ends with `claude stop` on itself. `force` is the old raw stop,
     for a session that is hung or ignoring its input."""
     s_ = next((x for x in sessions() if x["id"] == jid), None)
-    if force or not s_ or not s_.get("alive") or _wrapped_recently(jid, 600):
+    if force or not s_ or not s_.get("alive") or _exit_recently(jid, 600):
         log(f"stop {jid}{' (force)' if force else ''}")
         code, out = run_claude(["stop", jid], timeout=30, jid=jid)
         _live_cache["at"] = 0
         return (200 if code == 0 else 500), {"ok": code == 0, "output": out.strip()}
-    res = poke(jid, "stop", text=WRAP_TEXT)
+    res = poke(jid, "stop", text=EXIT_TEXT)
     if not res.get("ok"):
         return 409, {"ok": False, "error": res.get("error") or "couldn't type /wrape into it — Stop again with force"}
-    mark_wrapped(jid)
+    mark_wrapped(jid); _exit_sent[jid] = time.time()
     log(f"stop {jid}: wrapping first")
     return 202, {"ok": True, "pending": "wrapping"}
 
