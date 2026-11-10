@@ -57,6 +57,14 @@ Config dir here is `~/.claude-home`, not `~/.claude`.
   things that look clickable but aren't, view switches, drawer open/close + dwell, shortcuts, toasts, API errors,
   terminal detach) to `POST /api/ui-log` → `~/.config/overlook/ui-log.jsonl` (rotates at 50 MB). `python3 scripts/ui_report.py`
   summarises it: top controls, dead clicks, rage clicks, bounce drawers, recurring toasts/errors. Use it before changing the UI.
+- **◧ Arrange + window rediscovery:** `POST /api/arrange` puts the dashboard on the left half and tiles the
+  terminal windows on the right half (`_split_slot`); the mode persists as `settings.arrange` (`split`/`grid`)
+  so later ↗ App windows and re-tiles keep to it until ⊞ Align. `_discover_windows()` rebuilds
+  `_term_windows` from `ps` (each ↗ App Ghostty process carries `claude attach '<id>'` on its command line),
+  so a server restart no longer orphans open windows ("Aligned 0"). Window titles lead with a colour chip
+  (`CHIPS`, parallel to `PALETTE`): Ghostty/macOS draws the title bar in the terminal background and has no
+  separate title-bar colour (`window-titlebar-background` is GTK-only). Split maths is checked without
+  moving windows; the real Arrange click was NOT exercised before merge.
 - **⊞ Align (v0.8.1):** header button → `POST /api/align {cols, ids}`: sizes the dashboard's Chrome window
   (System Events, window named "Overlook") to the screen's visible frame and `retile()`s every open terminal
   window on demand — the layout POST only re-tiles on a CHANGE, so dragged windows never snapped back before.

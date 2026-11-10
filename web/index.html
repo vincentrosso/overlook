@@ -191,6 +191,7 @@ footer { color: var(--faint); font-size: 12px; text-align: center; padding: 20px
   <span class="hint" id="refreshed"></span>
   <div class="seg">
     <button class="big" id="alignBtn" title="Line the windows up: each terminal window back on its card's cell, this window sized to the screen">⊞ Align</button>
+    <button class="big" id="arrangeBtn" title="Split the screen: this page on the left half, the terminal windows tiled on the right half. Sticks until you Align.">◧ Arrange</button>
     <button class="big" id="alertBtn" title="Desktop notification + chime when a session needs you">🔕 Alerts off</button>
     <button class="big primary" id="newBtn">+ New run</button>
   </div>
@@ -349,15 +350,15 @@ function reportLayout(ids) {
 }
 let _rsz; window.addEventListener("resize", () => { clearTimeout(_rsz); _rsz = setTimeout(() => reportLayout(S.sessions.map(s => s.id)), 300); });
 // ⊞ Align: the same grid report, but the server re-tiles on demand (not only on change) and sizes this window too.
-async function alignWindows(btn) {
+async function alignWindows(btn, split = false) {
   const g = $("#sessions"), ids = S.sessions.map(s => s.id);
   const cols = g ? Math.max(1, getComputedStyle(g).gridTemplateColumns.split(" ").filter(Boolean).length) : 1;
   btn.disabled = true;
   try {
-    const r = await api("/api/align", { cols, ids });
+    const r = await api(split ? "/api/arrange" : "/api/align", { cols, ids });
     LAYOUT = cols + ":" + ids.join(",");
-    toast(`Aligned ${r.terminals} terminal window${r.terminals === 1 ? "" : "s"}` + (r.dash ? " + the dashboard" : " (dashboard window not found)"), 3500);
-  } catch (err) { toast("Couldn't align: " + err.message, 6000); }
+    toast(`${split ? "Arranged" : "Aligned"} ${r.terminals} terminal window${r.terminals === 1 ? "" : "s"}` + (r.dash ? " + the dashboard" : " (dashboard window not found)"), 3500);
+  } catch (err) { toast(`Couldn't ${split ? "arrange" : "align"}: ` + err.message, 6000); }
   btn.disabled = false;
 }
 
@@ -653,7 +654,7 @@ function setView(v) {
   if (!S.drawer) history.replaceState(null, "", "#" + v);
 }
 document.addEventListener("click", async e => {
-  const t = e.target.closest("[data-view],[data-f],[data-d],[data-k],[data-s],[data-a],[data-launch],[data-close],[data-tab],[data-copy],[data-stop],[data-yes],[data-wrap],[data-rename],[data-termwrap],[data-termexit],[data-color],[data-closesess],[data-closeall],[data-open],[data-reterm],#newBtn,#emptyNew,#alignBtn,#scrim");
+  const t = e.target.closest("[data-view],[data-f],[data-d],[data-k],[data-s],[data-a],[data-launch],[data-close],[data-tab],[data-copy],[data-stop],[data-yes],[data-wrap],[data-rename],[data-termwrap],[data-termexit],[data-color],[data-closesess],[data-closeall],[data-open],[data-reterm],#newBtn,#emptyNew,#alignBtn,#arrangeBtn,#scrim");
   if (!t) {
     const x = e.target.closest("button,a,.card,.pill,.tag,h2,.hint,.meta,.detail,.intent,.term,#dhd,#dbd,header");
     if (x && !e.target.closest("#termbox,input,textarea,select,label,a[href]")) uilog("deadclick", uidesc(x));
@@ -663,6 +664,7 @@ document.addEventListener("click", async e => {
   if (t.dataset.launch) { e.stopPropagation(); return openLaunch(t.dataset.launch); }
   if (t.id === "newBtn" || t.id === "emptyNew") { e.preventDefault(); return openLaunch(); }
   if (t.id === "alignBtn") { e.preventDefault(); return alignWindows(t); }
+  if (t.id === "arrangeBtn") { e.preventDefault(); return alignWindows(t, true); }
   if (t.id === "scrim" || t.dataset.close !== undefined) return closeDrawer();
   if (t.dataset.view) return setView(t.dataset.view);
   if (t.dataset.f) { S.sfilter = t.dataset.f; setView("status"); return renderStatus(); }

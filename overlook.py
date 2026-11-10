@@ -1021,6 +1021,11 @@ def auto_yes_loop():
 PALETTE = ["#3fb4f0", "#f2b84b", "#6cd47a", "#e36ba0", "#b48cf2", "#f08a5d", "#4fd1c5", "#d9c54b"]
 
 
+# Ghostty on macOS paints its title bar in the terminal's background colour (already the session
+# tint) and has no separate title-bar colour, so the title itself carries a chip in the palette colour.
+CHIPS = ["🔵", "🟧", "🟢", "🩷", "🟣", "🟠", "🩵", "🟡"]
+
+
 def session_color(jid: str, st: dict | None = None) -> str:
     st = st or load_settings()
     i = st.get("colors", {}).get(jid)
@@ -1098,11 +1103,54 @@ def align(body: dict) -> tuple[int, dict]:
         code, r = set_layout(body, tile=False)
         if code != 200:
             return code, r
+    _set_arrange("grid")
     _screen_cache["at"] = 0.0                 # re-read the screen: it may have changed
     frame = screen_frame()
     dash = _place_dash(frame) if frame else False
     retile()
     return 200, {"ok": True, "terminals": len(_term_windows), "dash": dash}
+
+
+def _set_arrange(mode: str) -> None:
+    with _settings_lock:
+        st = load_settings()
+        st["arrange"] = mode
+        save_settings(st)
+
+
+def arrange(body: dict) -> tuple[int, dict]:
+    """The ◧ Arrange button: the dashboard takes the left half of the screen, the terminal windows
+    tile the right half. The mode sticks (settings.arrange), so windows opened or re-tiled later
+    keep to their half until ⊞ Align puts them back on the card grid."""
+    if body.get("ids"):
+        code, r = set_layout(body, tile=False)
+        if code != 200:
+            return code, r
+    _set_arrange("split")
+    _screen_cache["at"] = 0.0
+    frame = screen_frame()
+    dash = False
+    if frame:
+        x, y, w, h = frame
+        dash = _place_dash((x, y, w - w // 2, h))
+    retile()
+    return 200, {"ok": True, "terminals": len(_term_windows), "dash": dash}
+
+
+def _split_slot(jid: str, frame: tuple[int, int, int, int]) -> tuple[int, int, int, int]:
+    """Cell for this session's terminal in the right half of the screen. Windows keep card order;
+    one column until it gets cramped (terminals want width more than height)."""
+    x0, y0, w, h = frame
+    order = [i for i in _layout["ids"] if i in _term_windows] + sorted(i for i in _term_windows if i not in _layout["ids"])
+    if jid not in order:
+        order.append(jid)
+    n, wide = len(order), w >= 2400
+    cols = 1 if n <= (2 if wide else 3) else 2 if n <= (6 if wide else 8) else 3
+    rows = -(-n // cols)
+    hw = w // 2
+    cw, ch = hw // cols, h // rows
+    i = order.index(jid)
+    return (x0 + w - hw + (i % cols) * cw, y0 + (i // cols) * ch, cw, ch)
 
 
 def window_slot(jid: str, st: dict) -> tuple[int, int, int, int] | None:
@@ -1113,6 +1161,8 @@ def window_slot(jid: str, st: dict) -> tuple[int, int, int, int] | None:
     if not frame:
         return None
     x0, y0, w, h = frame
+    if st.get("arrange") == "split":
+        return _split_slot(jid, frame)
     if jid in _layout["ids"]:
         cols = max(1, min(_layout["cols"], 6))
         rows = max(1, min(-(-len(_layout["ids"]) // cols), 4))
@@ -1135,11 +1185,11 @@ def window_slot(jid: str, st: dict) -> tuple[int, int, int, int] | None:
 
 def retile() -> None:
     """Move every terminal window Overlook opened to the cell its card now occupies."""
-    alive = _ghostty_pids()
+    alive = _discover_windows()
     for jid, pid in list(_term_windows.items()):
         if pid not in alive:
             _term_windows.pop(jid, None)
-            continue
+    for jid, pid in list(_term_windows.items()):
         slot = window_slot(jid, load_settings())
         if slot:
             _place_window(pid, slot, tries=6)
@@ -1151,6 +1201,25 @@ def _ghostty_pids() -> set[int]:
 
 
 _term_windows: dict[str, int] = {}   # session id -> pid of the ghostty process showing it (↗ App reuses it)
+_ATTACH_RE = re.compile(r" attach '([A-Za-z0-9_-]{4,64})'")
+
+
+def _discover_windows() -> set[int]:
+    """Re-learn which Ghostty process shows which session; returns the live Ghostty pids.
+    _term_windows is memory only, so a server restart used to orphan every open window (Align then
+    moved 0 of them). Each window ↗ App opens is its own process whose command line carries
+    `claude attach '<id>'`, so `ps` can always rebuild the map."""
+    out = subprocess.run(["ps", "-axwwo", "pid=,command="], capture_output=True, text=True).stdout
+    pids: set[int] = set()
+    for line in out.splitlines():
+        pid, _, cmd = line.strip().partition(" ")
+        if not pid.isdigit() or not cmd.split(" --", 1)[0].endswith("Ghostty.app/Contents/MacOS/ghostty"):
+            continue
+        pids.add(int(pid))
+        m = _ATTACH_RE.search(cmd)
+        if m:
+            _term_windows[m.group(1)] = int(pid)
+    return pids
 
 
 def _se(pid: int, *stmts: str) -> subprocess.CompletedProcess:
@@ -1185,7 +1254,9 @@ def _track_new_ghostty(jid: str, before: set[int], slot: tuple[int, int, int, in
     if pid is None:
         log("ghostty: no new process"); return
     _term_windows[jid] = pid
-    if slot:
+    if load_settings().get("arrange") == "split":
+        retile()                              # one more window changes every cell in the half
+    elif slot:
         _place_window(pid, slot)
 
 
@@ -1245,6 +1316,7 @@ def open_session(jid: str) -> dict:
         proj = Path(s_.get("work") or s_.get("cwd") or "").name
         if proj and proj not in title:
             title = f"{title} · {proj}"
+        title = f"{CHIPS[PALETTE.index(color)]} {title}"
         slot = window_slot(jid, st)
         save_settings(st)
     bg = tint(color)
@@ -1261,8 +1333,9 @@ def open_session(jid: str) -> dict:
         # --window-position-*/--window-width/height for these launches (verified 1.4.0), so the
         # window is placed afterwards through System Events.
         # One window per session: if the one we opened earlier is still there, bring it forward.
+        live = _discover_windows()
         pid = _term_windows.get(jid)
-        if pid and pid in _ghostty_pids() and _focus_ghostty(pid):
+        if pid and pid in live and _focus_ghostty(pid):
             log(f"open {jid}: focused existing Ghostty window (pid {pid})")
             return {"ok": True, "how": "focused its Ghostty window", "color": color}
         _term_windows.pop(jid, None)
@@ -1593,6 +1666,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(*set_layout(body))
         if p == "/api/align":
             return self._send(*align(body))
+        if p == "/api/arrange":
+            return self._send(*arrange(body))
         if p == "/api/ui-log":
             return self._send(*ui_log(body))
         return self._send(404, {"error": "not found"})
