@@ -157,7 +157,6 @@ kbd { font: 11px var(--mono); color: var(--faint); border: 1px solid var(--line)
 #stack { display: flex; flex-direction: column; gap: 6px; min-height: 0; }
 #stack[hidden] { display: none; }
 #stackbox { flex: 1 1 0; }
-#stackbox .xt { height: 100%; }
 .tbar { flex: none; display: flex; align-items: center; gap: 10px; min-height: 42px; padding: 5px 10px 5px 12px; cursor: pointer;
   border: 1px solid var(--line); border-left: 5px solid var(--sc, var(--line)); border-radius: 9px; background: var(--panel); }
 .tbar:hover { border-color: #3d424d; border-left-color: var(--sc); }
@@ -173,7 +172,7 @@ main:has(#v-status.split:not([hidden])) { flex: 1; min-height: 0; width: 100%; m
 #v-status.split:not([hidden]) { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(330px, 2fr) minmax(460px, 3fr); gap: 14px; }
 #v-status.split #statusLeft { min-height: 0; overflow: auto; padding-right: 4px; }
 #sessions [data-s].sel { outline: 2px solid #6b7280; outline-offset: 1px; }
-#termbox .xt { height: var(--term-h, 54%); }   /* Claude's input box is at the bottom of its screen; a half-height screen puts it mid-panel */
+#termbox .xt, #stackbox .xt { height: var(--term-h, 54%); }   /* Claude's input box is at the bottom of its screen; a half-height screen puts it mid-panel */
 .termbar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 10px; }
 .termbar #termhint { flex: 1 1 180px; min-width: 140px; }
 .tabs { display: flex; gap: 2px; border-bottom: 1px solid var(--line); margin: -4px 0 14px; }
