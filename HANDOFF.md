@@ -72,14 +72,17 @@ Config dir here is `~/.claude-home`, not `~/.claude`.
 - **Terminal tab = one bar above the terminal** (`.termbar`, built in `renderDrawer`): hint, auto-yes, ↗ App,
   Yes/Go, Wrap, Stop, Delete, Exit, Reconnect. `#termbox` flexes to fill the drawer (`.bd:has(#termbox)`);
   never size it with `100vh - N` again, that is what hid the old bottom bar.
-- **Terminals view (`#terms`, 2026-11-09):** the live terminals in the page, no terminal app. `renderStack()`
-  draws one `.tbar` per running background session and a persistent `#stackbox` holding the single xterm
-  (`mountTerm` now takes the box). Bars and box are ordered with CSS `order`, never moved in the DOM: moving
-  the xterm node drops keyboard focus on every 4s refresh. A bar's innerHTML is rewritten only when it
-  changed. The view is a flex column from `body` down (`body:has(#v-terms:not([hidden]))`), so the stack
-  gets what the header leaves even when the header wraps to two rows at half-screen width. One xterm at a
-  time, shared with the drawer: opening the drawer steals it, returning to the view remounts it.
-  Switching bars was tested with injected fake sessions only (one real session was running).
+- **Status splits (2026-11-09):** when background sessions are running and the page is ≥900px wide,
+  `#v-status` gets `.split`: cards on the left (`#statusLeft`, scrolls on its own), the live terminals stacked
+  on the right (`#stack`). `renderStack()` draws one `.tbar` per running session and a persistent `#stackbox`
+  holding the single xterm (`mountTerm` takes the box). Bars and box are ordered with CSS `order`, never moved
+  in the DOM: moving the xterm node drops keyboard focus on every 4s refresh. A bar's innerHTML is rewritten
+  only when it changed. Split is a flex column from `body` down, so nothing is sized from a guessed offset and
+  a header that wraps to two rows cannot push the terminal off the page. Clicking a running session's card
+  selects its terminal; ⤢ on a bar (or any non-running card) opens the old panel, which borrows the one xterm
+  and hands it back on close. A separate `#terms` nav view was built first and removed the same day: Vincent
+  wanted the terminals beside the cards, not instead of them. Bar switching was tested with injected fake
+  sessions only.
 - **Counts lag by design upstream:** card state comes from each job's `state.json`, which Claude Code writes
   after a turn ends; Overlook adds at most the 4s page poll (`claude agents` is cached 10s but only feeds
   pid/status).
