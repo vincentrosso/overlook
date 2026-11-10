@@ -83,6 +83,10 @@ Config dir here is `~/.claude-home`, not `~/.claude`.
   and hands it back on close. A separate `#terms` nav view was built first and removed the same day: Vincent
   wanted the terminals beside the cards, not instead of them. Bar switching was tested with injected fake
   sessions only.
+- **⏏ Wrap types `/wrap`, not `/wrape` (2026-11-09, Vincent's call):** the Wrap buttons (cards, split bars,
+  panel, Ctrl+Shift+W) wrap and leave the session RUNNING. Stop, ⏻ Exit and 🗑 Delete still type `/wrape`
+  (`EXIT_TEXT`), because they need the session to exit. `_exit_sent` records when `/wrape` was typed; a plain
+  `/wrap` must not count as "exit pending", or Close would wait forever for a session that never exits.
 - **Counts lag by design upstream:** card state comes from each job's `state.json`, which Claude Code writes
   after a turn ends; Overlook adds at most the 4s page poll (`claude agents` is cached 10s but only feeds
   pid/status).
