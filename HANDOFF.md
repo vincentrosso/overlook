@@ -70,8 +70,13 @@ Config dir here is `~/.claude-home`, not `~/.claude`.
   Yes/Go, Wrap, Stop, Delete, Exit, Reconnect. `#termbox` flexes to fill the drawer (`.bd:has(#termbox)`);
   never size it with `100vh - N` again, that is what hid the old bottom bar.
 - **Status splits (2026-11-09):** when background sessions are running and the page is ≥900px wide,
-  `#v-status` gets `.split`: cards on the left (`#statusLeft`, scrolls on its own), the live terminals stacked
-  on the right (`#stack`). `renderStack()` draws one `.tbar` per running session and a persistent `#stackbox`
+  `#v-status` gets `.split`: cards on the left, the live terminals stacked on the right (`#stack`). Since
+  PR #21 `#statusLeft` is `display: contents` in split: filters (col 1) and search (col 2) form row 1 of the
+  `#v-status` grid, and `#sessions` (which now does the scrolling) and `#stack` share row 2, so the first card
+  and first bar start on the same line. Cards and bars match on purpose: 4px left edge in the SESSION colour
+  (`--sc`, set inline on each card; state lives in the pill), same radius, and the selected card wears the open
+  bar's border + `--panel2`. A bar leads with the project (`→` work folder), then name and pill (PR #18).
+  `renderStack()` draws one `.tbar` per running session and a persistent `#stackbox`
   holding the single xterm (`mountTerm` takes the box). Bars and box are ordered with CSS `order`, never moved
   in the DOM: moving the xterm node drops keyboard focus on every 4s refresh. A bar's innerHTML is rewritten
   only when it changed. Split is a flex column from `body` down, so nothing is sized from a guessed offset and
