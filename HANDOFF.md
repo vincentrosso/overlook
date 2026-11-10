@@ -72,6 +72,17 @@ Config dir here is `~/.claude-home`, not `~/.claude`.
 - **Terminal tab = one bar above the terminal** (`.termbar`, built in `renderDrawer`): hint, auto-yes, ↗ App,
   Yes/Go, Wrap, Stop, Delete, Exit, Reconnect. `#termbox` flexes to fill the drawer (`.bd:has(#termbox)`);
   never size it with `100vh - N` again, that is what hid the old bottom bar.
+- **Terminals view (`#terms`, 2026-11-09):** the live terminals in the page, no terminal app. `renderStack()`
+  draws one `.tbar` per running background session and a persistent `#stackbox` holding the single xterm
+  (`mountTerm` now takes the box). Bars and box are ordered with CSS `order`, never moved in the DOM: moving
+  the xterm node drops keyboard focus on every 4s refresh. A bar's innerHTML is rewritten only when it
+  changed. The view is a flex column from `body` down (`body:has(#v-terms:not([hidden]))`), so the stack
+  gets what the header leaves even when the header wraps to two rows at half-screen width. One xterm at a
+  time, shared with the drawer: opening the drawer steals it, returning to the view remounts it.
+  Switching bars was tested with injected fake sessions only (one real session was running).
+- **Counts lag by design upstream:** card state comes from each job's `state.json`, which Claude Code writes
+  after a turn ends; Overlook adds at most the 4s page poll (`claude agents` is cached 10s but only feeds
+  pid/status).
 - **⚠ A scratch server (`--port 7899`) shares `settings.json` and the same Ghostty windows with the live one.**
   Window-placement tests on a scratch port get undone by the live server re-tiling behind them. Test window
   code on the live server (merge, pull, `pkill`), or stop the live one first. Page-only changes are fine on a
@@ -171,14 +182,6 @@ No automated tests exist.
 
 ## Known loose ends
 
-- **NEXT, asked for 2026-11-09 and not started: terminals inside the page.** Vincent chose "no Ghostty
-  windows: the web page shows the live terminals, sessions stacked, click one and it opens full". Plan: a
-  third nav view `terms` (`#v-terms`, `#stack`), one bar per live background session (dot, name, state,
-  `term_line`, Yes/Wrap/App) with `data-tsel`; a persistent `#stackbox` holds the single xterm. Order bars
-  and box with CSS `order` in a flex column so refresh never moves the xterm node (moving it drops keyboard
-  focus); update a bar's innerHTML only when it changed. Give `mountTerm` a box parameter (it hard-codes
-  `#termbox`) and share the `#termbox` CSS. Size the stack from its measured top, not a guessed `100vh - N`.
-  Add `terms` to `setView`, the hash handling in `init`, and the click selector list.
 - README Status paragraph still mentions logs and attach commands; the Logs tab and copy
   buttons are gone from the session panel. `/api/sessions/<id>/logs` still exists.
 - Dead code: `data-copy` click handler, `.summary`/`.stat`/`.chips` CSS.
