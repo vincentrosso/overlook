@@ -57,14 +57,25 @@ Config dir here is `~/.claude-home`, not `~/.claude`.
   things that look clickable but aren't, view switches, drawer open/close + dwell, shortcuts, toasts, API errors,
   terminal detach) to `POST /api/ui-log` → `~/.config/overlook/ui-log.jsonl` (rotates at 50 MB). `python3 scripts/ui_report.py`
   summarises it: top controls, dead clicks, rage clicks, bounce drawers, recurring toasts/errors. Use it before changing the UI.
-- **◧ Arrange + window rediscovery:** `POST /api/arrange` puts the dashboard on the left half and tiles the
-  terminal windows on the right half (`_split_slot`); the mode persists as `settings.arrange` (`split`/`grid`)
-  so later ↗ App windows and re-tiles keep to it until ⊞ Align. `_discover_windows()` rebuilds
-  `_term_windows` from `ps` (each ↗ App Ghostty process carries `claude attach '<id>'` on its command line),
-  so a server restart no longer orphans open windows ("Aligned 0"). Window titles lead with a colour chip
-  (`CHIPS`, parallel to `PALETTE`): Ghostty/macOS draws the title bar in the terminal background and has no
-  separate title-bar colour (`window-titlebar-background` is GTK-only). Split maths is checked without
-  moving windows; the real Arrange click was NOT exercised before merge.
+- **◧ Arrange (2026-11-09, PRs #5-#7, verified live):** `POST /api/arrange` puts the dashboard on the left
+  half, opens a Ghostty window for every running background session that lacks one, and STACKS them on the
+  right half (`_split_slot`): each collapsed to its title bar (`STRIP` 36px; Ghostty accepts it), the focused
+  one open in place with the remaining height. `focus_watch_loop` polls the frontmost app twice a second
+  (`lsappinfo`, not osascript) and re-stacks when a terminal window comes forward. Mode persists as
+  `settings.arrange` (`split`/`grid`) until ⊞ Align. `retile()` moves only windows whose cell changed
+  (`_placed`), in parallel; the buttons pass `force=True`.
+- **Window rediscovery:** `_discover_windows()` rebuilds `_term_windows` from `ps` (each ↗ App Ghostty process
+  carries `claude attach '<id>'` on its command line), so a restart no longer orphans windows ("Aligned 0").
+  A window of a finished session still matches and rides in the stack until closed.
+- **Title colour chip (`CHIPS`, parallel to `PALETTE`):** Ghostty on macOS draws the title bar in the terminal
+  background and has no separate title-bar colour (`window-titlebar-background` is GTK-only).
+- **Terminal tab = one bar above the terminal** (`.termbar`, built in `renderDrawer`): hint, auto-yes, ↗ App,
+  Yes/Go, Wrap, Stop, Delete, Exit, Reconnect. `#termbox` flexes to fill the drawer (`.bd:has(#termbox)`);
+  never size it with `100vh - N` again, that is what hid the old bottom bar.
+- **⚠ A scratch server (`--port 7899`) shares `settings.json` and the same Ghostty windows with the live one.**
+  Window-placement tests on a scratch port get undone by the live server re-tiling behind them. Test window
+  code on the live server (merge, pull, `pkill`), or stop the live one first. Page-only changes are fine on a
+  scratch port, and need no restart once pulled: `web/index.html` is read from disk per request.
 - **⊞ Align (v0.8.1):** header button → `POST /api/align {cols, ids}`: sizes the dashboard's Chrome window
   (System Events, window named "Overlook") to the screen's visible frame and `retile()`s every open terminal
   window on demand — the layout POST only re-tiles on a CHANGE, so dragged windows never snapped back before.
@@ -160,6 +171,14 @@ No automated tests exist.
 
 ## Known loose ends
 
+- **NEXT, asked for 2026-11-09 and not started: terminals inside the page.** Vincent chose "no Ghostty
+  windows: the web page shows the live terminals, sessions stacked, click one and it opens full". Plan: a
+  third nav view `terms` (`#v-terms`, `#stack`), one bar per live background session (dot, name, state,
+  `term_line`, Yes/Wrap/App) with `data-tsel`; a persistent `#stackbox` holds the single xterm. Order bars
+  and box with CSS `order` in a flex column so refresh never moves the xterm node (moving it drops keyboard
+  focus); update a bar's innerHTML only when it changed. Give `mountTerm` a box parameter (it hard-codes
+  `#termbox`) and share the `#termbox` CSS. Size the stack from its measured top, not a guessed `100vh - N`.
+  Add `terms` to `setView`, the hash handling in `init`, and the click selector list.
 - README Status paragraph still mentions logs and attach commands; the Logs tab and copy
   buttons are gone from the session panel. `/api/sessions/<id>/logs` still exists.
 - Dead code: `data-copy` click handler, `.summary`/`.stat`/`.chips` CSS.
