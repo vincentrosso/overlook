@@ -504,7 +504,9 @@ function mountTerm(id, fresh = false, color = null, box = $("#termbox")) {
 
 // ---------- live terminals in the page: the right column of Status, no terminal app needed
 function renderStack(focus = false) {
-  const live = S.sessions.filter(s => s.alive && !s.finished && s.kind !== "interactive");
+  // alive, not "unfinished": a session that ended its turn (done / needs input) is still attachable and is
+  // exactly the one you want to answer. `finished` is true for those, so filtering on it emptied the column.
+  const live = S.sessions.filter(s => s.alive && s.kind !== "interactive");
   const st = $("#stack"), box = $("#stackbox"), split = live.length > 0 && innerWidth >= 900;
   $("#v-status").classList.toggle("split", split); st.hidden = !split;
   if (!split) { if (TERM && box.contains(TERM.el)) killTerm(); return; }
