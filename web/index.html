@@ -146,7 +146,10 @@ kbd { font: 11px var(--mono); color: var(--faint); border: 1px solid var(--line)
 .drawer .x { margin-left: auto; }
 .drawer .xl { padding: 5px 9px; line-height: 1; margin-top: 2px; }   /* window close, top-left, Mac-style */
 .drawer.wide { width: min(1180px, 97vw); }
-#termbox { height: calc(100vh - 170px); min-height: 320px; background: #0b0d11; border: 1px solid var(--line); border-radius: 10px; padding: 8px; }
+.drawer .bd:has(#termbox) { display: flex; flex-direction: column; }   /* terminal fills what's left, so the bar under it (Wrap / Exit) is never below the fold */
+.drawer .bd:has(#termbox) > * { flex: none; }
+.drawer .bd:has(#termbox) > #termbox { flex: 1 1 0; }
+#termbox { min-height: 200px; background: #0b0d11; border: 1px solid var(--line); border-radius: 10px; padding: 8px; }
 #termbox { display: flex; flex-direction: column; }
 #termbox .xt { height: var(--term-h, 54%); }   /* Claude's input box is at the bottom of its screen; a half-height screen puts it mid-panel */
 .termbar { display: flex; gap: 10px; align-items: center; margin-top: 10px; }
