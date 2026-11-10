@@ -1137,7 +1137,7 @@ def arrange(body: dict) -> tuple[int, dict]:
     have = len(_term_windows)
     # every running background session gets a window on the right, not only the ones already open
     want = [s_["id"] for s_ in sessions()
-            if s_.get("alive") and not s_.get("finished") and s_.get("kind") != "interactive" and s_["id"] not in _term_windows][:8]
+            if s_.get("alive") and s_.get("kind") != "interactive" and s_["id"] not in _term_windows][:8]   # alive, incl. done/idle
     opened = 0
     if _terminal_app() == "Ghostty":
         for jid in want:
