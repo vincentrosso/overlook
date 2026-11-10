@@ -10,7 +10,7 @@ v0.8.0, branch `main`, public repo `vincentrosso/overlook`.
   `sudo scripts/port80.sh` adds a persistent pf `rdr` so `http://overlook.localhost` works too (a user
   process can't bind :80 on macOS — tested, EACCES — and the LaunchAgent must not run as root). Run `python3 overlook.py --open`.
 - `web/index.html`: the whole UI (vanilla JS, polls every 4s).
-- `scripts/install-launchd.sh`: run at login (`--uninstall` removes it). **Installed and KeepAlive:** `pkill -f overlook.py` restarts it on the new code; log `~/Library/Logs/overlook.log`.
+- `scripts/install-launchd.sh`: run at login (`--uninstall` removes it). **Installed and KeepAlive.** It **reloads itself** (PR #16): `code_watch_loop` re-execs the server (same pid) once `overlook.py` changes on disk, settles and compiles, and the page reloads when `/api/sessions`'s `build` (version + boot time + `index.html` mtime) differs from the one stamped into it (waits if a prompt is half-typed). So a `git pull` in the main checkout IS the deploy, no `pkill` — and every pull that touches either file drops the in-page terminals for a moment. A broken `overlook.py` is logged and ignored. Log `~/Library/Logs/overlook.log`.
 - `~/.config/overlook/settings.json`: per-agent default models and per-session auto-yes.
 
 ## Where the data comes from
@@ -92,7 +92,7 @@ Config dir here is `~/.claude-home`, not `~/.claude`.
   pid/status).
 - **⚠ A scratch server (`--port 7899`) shares `settings.json` and the same Ghostty windows with the live one.**
   Window-placement tests on a scratch port get undone by the live server re-tiling behind them. Test window
-  code on the live server (merge, pull, `pkill`), or stop the live one first. Page-only changes are fine on a
+  code on the live server (merge, pull; it restarts itself), or stop the live one first. Page-only changes are fine on a
   scratch port, and need no restart once pulled: `web/index.html` is read from disk per request.
 - **⊞ Align (v0.8.1):** header button → `POST /api/align {cols, ids}`: sizes the dashboard's Chrome window
   (System Events, window named "Overlook") to the screen's visible frame and `retile()`s every open terminal
