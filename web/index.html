@@ -514,7 +514,7 @@ function renderStack(focus = false) {
     const c = stClass(s.state), line = s.term_line || s.detail || "";
     const base = p => shortPath(p).split("/").pop(), moved = s.work && s.work !== s.cwd;
     // the card's top two lines, on one row: project (→ where it is working now), then name + status
-    const h = `<span class="pj mono" title="${esc(s.cwd)}${moved ? " — now working in " + esc(s.work) : ""}"><b>${esc(base(s.cwd))}</b>${moved ? ` <span class="work">→ <b>${esc(base(s.work))}</b></span>` : ""}</span><span class="dot" style="background:${esc(s.color)}"></span><span class="nm">${esc(s.name)}</span><span class="pill st-${c} ${c === "working" && s.status === "active" ? "pulse" : ""}">${c === "input" ? "needs you" : esc(s.state)}</span><span class="tl hint mono" title="${esc(line)}">${esc(line)}</span>`
+    const h = `<span class="pj mono" title="${esc(s.cwd)}${moved ? " — now working in " + esc(s.work) : ""}"><b>${esc(base(s.cwd))}</b>${moved ? ` <span class="work">→ <b>${esc(base(s.work))}</b></span>` : ""}</span><span class="dot" style="background:${esc(s.color)}"></span><span class="nm">${esc(s.name)}</span><span class="pill st-${c}">${c === "input" ? "needs you" : esc(s.state)}</span><span class="tl hint mono" title="${esc(line)}">${esc(line)}</span>`
       + (c === "input" ? `<button class="btn primary" data-yes="${esc(s.id)}">✔ Yes / Go</button>` : "")
       + `<button class="btn" data-wrap="${esc(s.id)}" title="Send /wrap: wrap up. The session keeps running.">⏏ Wrap</button><button class="btn" data-sd="${esc(s.id)}" title="Open the full panel: Stop, Exit, auto-yes, Reconnect, ↗ App">⤢</button>`;
     if (b._h !== h) { b.innerHTML = h; b._h = h; }     // untouched bars keep their hover and half-finished clicks
