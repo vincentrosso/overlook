@@ -1107,7 +1107,7 @@ def align(body: dict) -> tuple[int, dict]:
     _screen_cache["at"] = 0.0                 # re-read the screen: it may have changed
     frame = screen_frame()
     dash = _place_dash(frame) if frame else False
-    retile()
+    retile(force=True)
     return 200, {"ok": True, "terminals": len(_term_windows), "dash": dash}
 
 
@@ -1120,7 +1120,7 @@ def _set_arrange(mode: str) -> None:
 
 def arrange(body: dict) -> tuple[int, dict]:
     """The ◧ Arrange button: the dashboard takes the left half of the screen, the terminal windows
-    tile the right half. The mode sticks (settings.arrange), so windows opened or re-tiled later
+    stack on the right half (title bars, with the clicked one open: see _split_slot). The mode sticks (settings.arrange), so windows opened or re-tiled later
     keep to their half until ⊞ Align puts them back on the card grid."""
     if body.get("ids"):
         code, r = set_layout(body, tile=False)
@@ -1133,24 +1133,67 @@ def arrange(body: dict) -> tuple[int, dict]:
     if frame:
         x, y, w, h = frame
         dash = _place_dash((x, y, w - w // 2, h))
-    retile()
-    return 200, {"ok": True, "terminals": len(_term_windows), "dash": dash}
+    retile(force=True)
+    have = len(_term_windows)
+    # every running background session gets a window on the right, not only the ones already open
+    want = [s_["id"] for s_ in sessions()
+            if s_.get("alive") and not s_.get("finished") and s_.get("kind") != "interactive" and s_["id"] not in _term_windows][:8]
+    opened = 0
+    if _terminal_app() == "Ghostty":
+        for jid in want:
+            opened += 1 if open_session(jid).get("ok") else 0
+    return 200, {"ok": True, "terminals": have, "opened": opened, "dash": dash}
+
+
+STRIP = 36          # height of a collapsed terminal window: its title bar and nothing else
+_focus: dict = {"jid": None}   # the terminal showing full in the stack (the last one clicked)
 
 
 def _split_slot(jid: str, frame: tuple[int, int, int, int]) -> tuple[int, int, int, int]:
-    """Cell for this session's terminal in the right half of the screen. Windows keep card order;
-    one column until it gets cramped (terminals want width more than height)."""
+    """Stack for the right half of the screen: every terminal window is collapsed to its title bar,
+    in card order, except the focused one, which opens in place and takes all the height left.
+    Click any title bar (or ↗ App) and focus_watch_loop makes that one the open one."""
     x0, y0, w, h = frame
     order = [i for i in _layout["ids"] if i in _term_windows] + sorted(i for i in _term_windows if i not in _layout["ids"])
     if jid not in order:
         order.append(jid)
-    n, wide = len(order), w >= 2400
-    cols = 1 if n <= (2 if wide else 3) else 2 if n <= (6 if wide else 8) else 3
-    rows = -(-n // cols)
-    hw = w // 2
-    cw, ch = hw // cols, h // rows
+    n, hw = len(order), w // 2
+    k = order.index(_focus["jid"]) if _focus["jid"] in order else 0
+    strip = min(STRIP, h // (2 * n))
+    full = h - (n - 1) * strip
     i = order.index(jid)
-    return (x0 + w - hw + (i % cols) * cw, y0 + (i // cols) * ch, cw, ch)
+    y = y0 + i * strip + (full - strip if i > k else 0)
+    return (x0 + w - hw, y, hw, full if i == k else strip)
+
+
+def _front_pid() -> int | None:
+    """Pid of the frontmost app. lsappinfo, not osascript: this runs twice a second."""
+    try:
+        asn = subprocess.run(["lsappinfo", "front"], capture_output=True, text=True, timeout=3).stdout.strip()
+        out = subprocess.run(["lsappinfo", "info", "-only", "pid", asn], capture_output=True, text=True, timeout=3).stdout
+        return int(out.strip().split("=")[1])
+    except Exception:
+        return None
+
+
+def focus_watch_loop() -> None:
+    """While arranged (settings.arrange == split): when a terminal window comes to the front, it
+    becomes the open one in the stack and the previous one folds back to its title bar."""
+    mode_at, mode = 0.0, "grid"
+    while True:
+        time.sleep(0.5)
+        try:
+            if time.time() - mode_at > 3:
+                mode_at, mode = time.time(), load_settings().get("arrange")
+            if mode != "split" or len(_term_windows) < 2:
+                continue
+            front = _front_pid()
+            jid = next((j for j, p_ in _term_windows.items() if p_ == front), None)
+            if jid and jid != _focus["jid"]:
+                _focus["jid"] = jid
+                retile()
+        except Exception as e:
+            log(f"focus watch: {e!r}")
 
 
 def window_slot(jid: str, st: dict) -> tuple[int, int, int, int] | None:
@@ -1183,16 +1226,36 @@ def window_slot(jid: str, st: dict) -> tuple[int, int, int, int] | None:
     return (x0 + (i % cols) * cw, y0 + (i // cols) * ch, cw, ch)
 
 
-def retile() -> None:
-    """Move every terminal window Overlook opened to the cell its card now occupies."""
+_retile_lock = threading.Lock()
+
+
+_placed: dict[int, tuple] = {}   # ghostty pid -> the cell we last put its window in
+
+
+def retile(force: bool = False) -> None:
+    """Move every terminal window Overlook opened to the cell its card now occupies. `force` also
+    re-places windows whose cell has not changed (the buttons: they may have been dragged)."""
+    with _retile_lock:
+        _retile(force)
+
+
+def _retile(force: bool = False) -> None:
     alive = _discover_windows()
     for jid, pid in list(_term_windows.items()):
         if pid not in alive:
             _term_windows.pop(jid, None)
+    st, jobs = load_settings(), []
     for jid, pid in list(_term_windows.items()):
-        slot = window_slot(jid, load_settings())
-        if slot:
-            _place_window(pid, slot, tries=6)
+        slot = window_slot(jid, st)
+        if slot and (force or _placed.get(pid) != slot):   # a focus change moves only the windows whose cell changed
+            _placed[pid] = slot
+            jobs.append(threading.Thread(target=_place_window, args=(pid, slot, 6), daemon=True))
+    for pid in [p_ for p_ in _placed if p_ not in alive]:
+        _placed.pop(pid, None)
+    for t in jobs:
+        t.start()
+    for t in jobs:
+        t.join()
 
 
 def _ghostty_pids() -> set[int]:
@@ -1247,15 +1310,19 @@ def _track_new_ghostty(jid: str, before: set[int], slot: tuple[int, int, int, in
     pid = None
     for _ in range(40):                       # up to ~8s for the process to show up
         time.sleep(0.2)
-        new = _ghostty_pids() - before
-        if new:
-            pid = min(new)
+        _discover_windows()                   # several may open at once: the command line says whose is whose
+        pid = _term_windows.get(jid)
+        if pid:
             break
+    if pid is None:
+        new = _ghostty_pids() - before
+        pid = min(new) if new else None
     if pid is None:
         log("ghostty: no new process"); return
     _term_windows[jid] = pid
     if load_settings().get("arrange") == "split":
-        retile()                              # one more window changes every cell in the half
+        _focus["jid"] = jid                   # the window just opened is the open one in the stack
+        retile()
     elif slot:
         _place_window(pid, slot)
 
@@ -1696,6 +1763,7 @@ def main():
     threading.Thread(target=auto_yes_loop, daemon=True).start()
     threading.Thread(target=pending_close_loop, daemon=True).start()
     threading.Thread(target=term_line_loop, daemon=True).start()
+    threading.Thread(target=focus_watch_loop, daemon=True).start()
     if a.app:
         threading.Timer(0.5, lambda: open_app_window(url)).start()
     elif a.open:
