@@ -35,6 +35,49 @@ from urllib.parse import parse_qs, urlparse
 VERSION = "0.8.2"
 HOME = Path.home()
 WEB = Path(__file__).resolve().parent / "web"
+SELF = Path(__file__).resolve()
+BOOT = str(int(time.time()))
+
+
+def build_stamp() -> str:
+    """Changes whenever the server restarts or the page file changes; the page reloads itself on a new one."""
+    try:
+        web = int((WEB / "index.html").stat().st_mtime)
+    except OSError:
+        web = 0
+    return f"{VERSION}-{BOOT}-{web}"
+
+
+def code_watch_loop() -> None:
+    """Re-exec on new server code (a pull, an edit), so nobody has to pkill. Waits for the file to
+    settle and to compile: a half-written or broken overlook.py leaves the running server alone."""
+    start = seen = bad = SELF.stat().st_mtime
+    while True:
+        time.sleep(2)
+        try:
+            m = SELF.stat().st_mtime
+        except OSError:
+            continue
+        if m == start or m == bad:
+            continue
+        if m != seen:          # still being written: wait for two equal reads
+            seen = m
+            continue
+        try:
+            compile(SELF.read_bytes(), str(SELF), "exec")
+        except (SyntaxError, ValueError, OSError) as e:
+            bad = m
+            log(f"overlook.py changed but does not compile, staying on the old code: {e}")
+            continue
+        log("overlook.py changed: restarting on the new code")
+        argv = [x for x in sys.argv if x not in ("--open", "--app")]   # don't pop a second window
+        try:
+            sys.stdout.flush()
+            sys.stderr.flush()
+            os.execv(sys.executable, [sys.executable, *argv])
+        except OSError as e:
+            bad = m
+            log(f"restart failed, staying on the old code: {e}")
 ID_RE = re.compile(r"^[A-Za-z0-9_-]{4,64}$")
 AGENT_RE = re.compile(r"^[A-Za-z0-9_.:-]{1,128}$")
 PERMISSION_MODES = {"default", "acceptEdits", "auto", "plan", "bypassPermissions"}
@@ -1618,13 +1661,14 @@ class Handler(BaseHTTPRequestHandler):
         q = parse_qs(u.query)
         try:
             if p in ("/", "/index.html"):
-                return self._send(200, (WEB / "index.html").read_bytes(), "text/html; charset=utf-8")
+                return self._send(200, (WEB / "index.html").read_bytes().replace(b"__BUILD__", build_stamp().encode()),
+                                  "text/html; charset=utf-8")
             m = re.match(r"^/ws/term/([^/]+)$", p)
             if m and ID_RE.match(m.group(1)):
                 return self._ws_terminal(m.group(1), q)
             if p == "/api/sessions":
                 _term_viewed["at"] = time.time()
-                return self._send(200, {"sessions": sessions(), "now": time.time()})
+                return self._send(200, {"sessions": sessions(), "now": time.time(), "build": build_stamp()})
             if p == "/api/agents":
                 return self._send(200, {"agents": agents()})
             if p == "/api/dirs":
@@ -1771,6 +1815,7 @@ def main():
     threading.Thread(target=pending_close_loop, daemon=True).start()
     threading.Thread(target=term_line_loop, daemon=True).start()
     threading.Thread(target=focus_watch_loop, daemon=True).start()
+    threading.Thread(target=code_watch_loop, daemon=True).start()
     if a.app:
         threading.Timer(0.5, lambda: open_app_window(url)).start()
     elif a.open:

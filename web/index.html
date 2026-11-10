@@ -816,9 +816,21 @@ document.addEventListener("keydown", e => {
   }
 });
 
+// Stamped by the server into this page; /api/sessions carries the live one. A mismatch means the
+// server restarted or the page file changed, so this copy is stale (and its terminals are dead): reload.
+const BUILD = "__BUILD__";
+function staleReload(build) {
+  const a = document.activeElement;
+  if (a && a.matches("input, textarea") && !a.closest(".xterm") && a.value) {   // don't eat a half-typed prompt
+    $("#refreshed").textContent = "⟳ new version: reloads when you finish typing"; return false;
+  }
+  uilog("auto-reload", { from: BUILD, to: build }); uiflush();
+  location.reload(); return true;
+}
 async function refresh() {
   try {
-    const { sessions } = await api("/api/sessions");
+    const { sessions, build } = await api("/api/sessions");
+    if (build && !BUILD.startsWith("__") && build !== BUILD && staleReload(build)) return;
     S.sessions = sessions; renderStatus(); renderStack(); checkAlerts();
     $("#refreshed").textContent = "updated " + new Date().toLocaleTimeString([], {hour: "2-digit", minute: "2-digit", second: "2-digit"});
     if (S.drawer?.kind === "session" && S.drawer.tab === "overview") renderDrawer();
@@ -838,12 +850,17 @@ async function refresh() {
   $("#ver").textContent = info.version ? "v" + info.version : "";
   if (info.models) MODELS = info.models;
   $("#cfg").textContent = (info.configDirs || []).map(shortPath).join(", ");
+  setInterval(() => { if (!document.hidden) refresh(); }, 4000);   // first: a failed load below must not leave a dead page
+  document.addEventListener("visibilitychange", () => { if (!document.hidden) refresh(); });
   await refresh();
-  const [{ agents }, { dirs }] = await Promise.all([api("/api/agents"), api("/api/dirs")]);
-  S.agents = agents; S.dirs = dirs; renderHub();
+  for (;;) {   // server mid-restart while we loaded: keep trying instead of dying half-drawn
+    try {
+      const [{ agents }, { dirs }] = await Promise.all([api("/api/agents"), api("/api/dirs")]);
+      S.agents = agents; S.dirs = dirs; renderHub(); break;
+    } catch (e) { await new Promise(r => setTimeout(r, 2000)); }
+  }
   location.hash = startHash; openFromHash();
   window.addEventListener("hashchange", () => { if (!openFromHash() && !location.hash.startsWith("#s/") && !location.hash.startsWith("#a/")) { closeDrawer(); setView(location.hash === "#hub" ? "hub" : "status"); } });
-  setInterval(() => { if (!document.hidden) refresh(); }, 4000);
 })();
 </script>
 </body>
