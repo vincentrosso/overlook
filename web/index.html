@@ -10,7 +10,7 @@
 :root {
   --bg: #111214; --panel: #191b1f; --panel2: #202329; --line: #2c3038;
   --ink: #e9e6e1; --dim: #9a9ea8; --faint: #6b707a;
-  --accent: #d9603e; --accent2: #f08a5d;
+  --accent: #3b82f6; --accent2: #60a5fa;   /* blue: the old rust accent read as red, i.e. as danger */
   --working: #3fb4f0; --done: #48c78e; --input: #f2b84b; --failed: #ef5b5b; --idle: #8a8f99;
   --r: 10px; --mono: ui-monospace, "SF Mono", Menlo, monospace;
 }
@@ -48,7 +48,7 @@ kbd { font: 11px var(--mono); color: var(--faint); border: 1px solid var(--line)
 .chips { display: flex; gap: 6px; flex-wrap: wrap; }
 .chip { border: 1px solid var(--line); background: var(--panel); border-radius: 999px; padding: 4px 11px;
   font-size: 12px; cursor: pointer; color: var(--dim); user-select: none; }
-.chip.on { border-color: var(--accent); color: var(--ink); background: rgba(217,96,62,.12); }
+.chip.on { border-color: var(--accent); color: var(--ink); background: rgba(59,130,246,.14); }
 .chip b { color: var(--faint); font-weight: 500; margin-left: 4px; }
 .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 12px; }
 .card { background: var(--panel); border: 1px solid var(--line); border-radius: var(--r); padding: 14px 15px;
