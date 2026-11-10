@@ -161,7 +161,11 @@ kbd { font: 11px var(--mono); color: var(--faint); border: 1px solid var(--line)
   border: 1px solid var(--line); border-left: 5px solid var(--sc, var(--line)); border-radius: 9px; background: var(--panel); }
 .tbar:hover { border-color: #3d424d; border-left-color: var(--sc); }
 .tbar.on { background: var(--panel2); border-color: var(--sc); }
-.tbar .nm { font-weight: 650; white-space: nowrap; }
+.tbar .nm { font-weight: 650; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 3ch; }
+.tbar .pj { flex: none; max-width: 38%; font-size: 13.5px; color: var(--dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tbar .pj b { color: var(--ink); font-weight: 650; }
+.tbar .pj .work, .tbar .pj .work b { color: var(--input); }
+.tbar .pill { flex: none; }
 .tbar .tl { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 /* split = a flex column from the body down, so both columns get exactly what the header leaves, however
    many rows the header wraps to: no measured or guessed offsets. The card column scrolls on its own. */
@@ -518,7 +522,9 @@ function renderStack(focus = false) {
     if (!b) { b = document.createElement("div"); b.className = "tbar"; b.dataset.tsel = s.id; st.appendChild(b); }
     b.style.order = 2 * i; b.style.setProperty("--sc", s.color); b.classList.toggle("on", s.id === S.tsel);
     const c = stClass(s.state), line = s.term_line || s.detail || "";
-    const h = `<span class="dot" style="background:${esc(s.color)}"></span><span class="nm">${esc(s.name)}</span><span class="pill st-${c}">${esc(s.state)}</span><span class="tl hint mono" title="${esc(line)}">${esc(line)}</span>`
+    const base = p => shortPath(p).split("/").pop(), moved = s.work && s.work !== s.cwd;
+    // the card's top two lines, on one row: project (→ where it is working now), then name + status
+    const h = `<span class="pj mono" title="${esc(s.cwd)}${moved ? " — now working in " + esc(s.work) : ""}"><b>${esc(base(s.cwd))}</b>${moved ? ` <span class="work">→ <b>${esc(base(s.work))}</b></span>` : ""}</span><span class="dot" style="background:${esc(s.color)}"></span><span class="nm">${esc(s.name)}</span><span class="pill st-${c} ${c === "working" && s.status === "active" ? "pulse" : ""}">${c === "input" ? "needs you" : esc(s.state)}</span><span class="tl hint mono" title="${esc(line)}">${esc(line)}</span>`
       + (c === "input" ? `<button class="btn primary" data-yes="${esc(s.id)}">✔ Yes / Go</button>` : "")
       + `<button class="btn" data-wrap="${esc(s.id)}" title="Send /wrap: wrap up. The session keeps running.">⏏ Wrap</button><button class="btn" data-sd="${esc(s.id)}" title="Open the full panel: Stop, Exit, auto-yes, Reconnect, ↗ App">⤢</button>`;
     if (b._h !== h) { b.innerHTML = h; b._h = h; }     // untouched bars keep their hover and half-finished clicks
