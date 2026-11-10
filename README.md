@@ -93,8 +93,9 @@ It reads what Claude Code already writes to disk; nothing to configure.
 | Env var | Default | |
 |---|---|---|
 | `OVERLOOK_PORT` | `7878` | |
-| `CLAUDE_CONFIG_DIR` | `~/.claude` | also checks `~/.claude-home` |
-| `OVERLOOK_ROOTS` | `~/Dropbox/development` | colon-separated; git repos inside are offered in the launch folder picker |
+| `CLAUDE_CONFIG_DIR` | `~/.claude` | also reads every profile's config dir |
+| `OVERLOOK_ROOTS` | every profile root | colon-separated; each root and the git repos inside it are offered in the launch folder picker |
+| `OVERLOOK_PROFILES` | `claude-nit` + `claude-home` | `name=root=configdir;…` A launch runs with `CLAUDE_CONFIG_DIR` set to the profile whose root holds the folder (the form's Profile select overrides) |
 | `OVERLOOK_CLAUDE` | `claude` on PATH | path to the CLI |
 
 ## Security

@@ -192,7 +192,7 @@ No automated tests exist.
   buttons are gone from the session panel. `/api/sessions/<id>/logs` still exists.
 - Dead code: `data-copy` click handler, `.summary`/`.stat`/`.chips` CSS.
 - Yes/Stop are background-only. Answering a terminal session has no mechanism yet.
-- `OVERLOOK_ROOTS` defaults to `~/Dropbox/development`, which is personal to this machine.
+- **Profiles (2026-11-10):** `PROFILES` in `overlook.py` pairs a root with a config dir: `claude-nit` = `~/Dropbox/NIT America/development/gh_nitamerica` → `~/.claude-nit`, `claude-home` = `~/Dropbox/development` → `~/.claude-home`. The folder picker lists both roots and their repos; `launch()` sets `CLAUDE_CONFIG_DIR` from the folder (`profile_for`), or from the form's Profile select. Personal to this machine: override with `OVERLOOK_PROFILES` / `OVERLOOK_ROOTS`. The launchd plist still exports `CLAUDE_CONFIG_DIR=~/.claude-nit`, which now only decides folders outside both roots.
 - Each test session costs usage and appears in the owner's list; name it obviously and
   `claude rm` it afterwards.
 
