@@ -1128,124 +1128,6 @@ def set_layout(body: dict, tile: bool = True) -> tuple[int, dict]:
     return 200, {"ok": True, "changed": changed}
 
 
-def _place_dash(frame: tuple[int, int, int, int]) -> bool:
-    """Size the dashboard's own browser window (Chrome-family app window, or the tab in front) to the
-    screen's visible frame, so its card grid lines up with the terminal cells."""
-    x, y, w, h = frame
-    win = '(first window whose name contains "Overlook")'
-    for app in ("Google Chrome", "Brave Browser", "Microsoft Edge", "Chromium"):
-        pre = f'tell application "System Events" to tell process "{app}" to '
-        try:
-            r = subprocess.run(["osascript", "-e", pre + f"set position of {win} to {{{x}, {y}}}",
-                                "-e", pre + f"set size of {win} to {{{w}, {h}}}"], capture_output=True, text=True, timeout=10)
-        except subprocess.TimeoutExpired:
-            continue
-        if r.returncode == 0:
-            return True
-    return False
-
-
-def align(body: dict) -> tuple[int, dict]:
-    """The ⊞ Align button: take the page's current grid, size the dashboard window to the screen and
-    put every open terminal window back on its card's cell (the layout POST only re-tiles on CHANGE;
-    this does it on demand, e.g. after windows were dragged or a display came and went)."""
-    if body.get("ids"):
-        code, r = set_layout(body, tile=False)
-        if code != 200:
-            return code, r
-    _set_arrange("grid")
-    _screen_cache["at"] = 0.0                 # re-read the screen: it may have changed
-    frame = screen_frame()
-    dash = _place_dash(frame) if frame else False
-    retile(force=True)
-    return 200, {"ok": True, "terminals": len(_term_windows), "dash": dash}
-
-
-def _set_arrange(mode: str) -> None:
-    with _settings_lock:
-        st = load_settings()
-        st["arrange"] = mode
-        save_settings(st)
-
-
-def arrange(body: dict) -> tuple[int, dict]:
-    """The ◧ Arrange button: the dashboard takes the left half of the screen, the terminal windows
-    stack on the right half (title bars, with the clicked one open: see _split_slot). The mode sticks (settings.arrange), so windows opened or re-tiled later
-    keep to their half until ⊞ Align puts them back on the card grid."""
-    if body.get("ids"):
-        code, r = set_layout(body, tile=False)
-        if code != 200:
-            return code, r
-    _set_arrange("split")
-    _screen_cache["at"] = 0.0
-    frame = screen_frame()
-    dash = False
-    if frame:
-        x, y, w, h = frame
-        dash = _place_dash((x, y, w - w // 2, h))
-    retile(force=True)
-    have = len(_term_windows)
-    # every running background session gets a window on the right, not only the ones already open
-    want = [s_["id"] for s_ in sessions()
-            if s_.get("alive") and s_.get("kind") != "interactive" and s_["id"] not in _term_windows][:8]   # alive, incl. done/idle
-    opened = 0
-    if _terminal_app() == "Ghostty":
-        for jid in want:
-            opened += 1 if open_session(jid).get("ok") else 0
-    return 200, {"ok": True, "terminals": have, "opened": opened, "dash": dash}
-
-
-STRIP = 36          # height of a collapsed terminal window: its title bar and nothing else
-_focus: dict = {"jid": None}   # the terminal showing full in the stack (the last one clicked)
-
-
-def _split_slot(jid: str, frame: tuple[int, int, int, int]) -> tuple[int, int, int, int]:
-    """Stack for the right half of the screen: every terminal window is collapsed to its title bar,
-    in card order, except the focused one, which opens in place and takes all the height left.
-    Click any title bar (or ↗ App) and focus_watch_loop makes that one the open one."""
-    x0, y0, w, h = frame
-    order = [i for i in _layout["ids"] if i in _term_windows] + sorted(i for i in _term_windows if i not in _layout["ids"])
-    if jid not in order:
-        order.append(jid)
-    n, hw = len(order), w // 2
-    k = order.index(_focus["jid"]) if _focus["jid"] in order else 0
-    strip = min(STRIP, h // (2 * n))
-    full = h - (n - 1) * strip
-    i = order.index(jid)
-    y = y0 + i * strip + (full - strip if i > k else 0)
-    return (x0 + w - hw, y, hw, full if i == k else strip)
-
-
-def _front_pid() -> int | None:
-    """Pid of the frontmost app. lsappinfo, not osascript: this runs twice a second."""
-    try:
-        asn = subprocess.run(["lsappinfo", "front"], capture_output=True, text=True, timeout=3).stdout.strip()
-        out = subprocess.run(["lsappinfo", "info", "-only", "pid", asn], capture_output=True, text=True, timeout=3).stdout
-        return int(out.strip().split("=")[1])
-    except Exception:
-        return None
-
-
-def focus_watch_loop() -> None:
-    """While arranged (settings.arrange == split): when a terminal window comes to the front, it
-    becomes the open one in the stack and the previous one folds back to its title bar."""
-    mode_at, mode = 0.0, "grid"
-    while True:
-        time.sleep(0.5)
-        try:
-            if time.time() - mode_at > 3:
-                mode_at, mode = time.time(), load_settings().get("arrange")
-            if mode != "split" or len(_term_windows) < 2:
-                continue
-            front = _front_pid()
-            jid = next((j for j, p_ in _term_windows.items() if p_ == front), None)
-            if jid and jid != _focus["jid"]:
-                _focus["jid"] = jid
-                retile()
-        except Exception as e:
-            log(f"focus watch: {e!r}")
-
-
 def window_slot(jid: str, st: dict) -> tuple[int, int, int, int] | None:
     """Grid cell for this session's terminal window = the cell its card has on the dashboard
     (same column count, same order). Before the page has reported a layout: the old scheme,
@@ -1254,8 +1136,6 @@ def window_slot(jid: str, st: dict) -> tuple[int, int, int, int] | None:
     if not frame:
         return None
     x0, y0, w, h = frame
-    if st.get("arrange") == "split":
-        return _split_slot(jid, frame)
     if jid in _layout["ids"]:
         cols = max(1, min(_layout["cols"], 6))
         rows = max(1, min(-(-len(_layout["ids"]) // cols), 4))
@@ -1319,8 +1199,8 @@ _ATTACH_RE = re.compile(r" attach '([A-Za-z0-9_-]{4,64})'")
 
 def _discover_windows() -> set[int]:
     """Re-learn which Ghostty process shows which session; returns the live Ghostty pids.
-    _term_windows is memory only, so a server restart used to orphan every open window (Align then
-    moved 0 of them). Each window ↗ App opens is its own process whose command line carries
+    _term_windows is memory only, so a server restart used to orphan every open window. Each
+    window ↗ App opens is its own process whose command line carries
     `claude attach '<id>'`, so `ps` can always rebuild the map."""
     out = subprocess.run(["ps", "-axwwo", "pid=,command="], capture_output=True, text=True).stdout
     pids: set[int] = set()
@@ -1370,10 +1250,7 @@ def _track_new_ghostty(jid: str, before: set[int], slot: tuple[int, int, int, in
     if pid is None:
         log("ghostty: no new process"); return
     _term_windows[jid] = pid
-    if load_settings().get("arrange") == "split":
-        _focus["jid"] = jid                   # the window just opened is the open one in the stack
-        retile()
-    elif slot:
+    if slot:
         _place_window(pid, slot)
 
 
@@ -1782,10 +1659,6 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(*stop_session(m.group(1), force=bool(body.get("force"))))
         if p == "/api/layout":
             return self._send(*set_layout(body))
-        if p == "/api/align":
-            return self._send(*align(body))
-        if p == "/api/arrange":
-            return self._send(*arrange(body))
         if p == "/api/ui-log":
             return self._send(*ui_log(body))
         return self._send(404, {"error": "not found"})
@@ -1814,7 +1687,6 @@ def main():
     threading.Thread(target=auto_yes_loop, daemon=True).start()
     threading.Thread(target=pending_close_loop, daemon=True).start()
     threading.Thread(target=term_line_loop, daemon=True).start()
-    threading.Thread(target=focus_watch_loop, daemon=True).start()
     threading.Thread(target=code_watch_loop, daemon=True).start()
     if a.app:
         threading.Timer(0.5, lambda: open_app_window(url)).start()

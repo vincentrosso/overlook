@@ -57,16 +57,13 @@ Config dir here is `~/.claude-home`, not `~/.claude`.
   things that look clickable but aren't, view switches, drawer open/close + dwell, shortcuts, toasts, API errors,
   terminal detach) to `POST /api/ui-log` → `~/.config/overlook/ui-log.jsonl` (rotates at 50 MB). `python3 scripts/ui_report.py`
   summarises it: top controls, dead clicks, rage clicks, bounce drawers, recurring toasts/errors. Use it before changing the UI.
-- **◧ Arrange (2026-11-09, PRs #5-#7, verified live):** `POST /api/arrange` puts the dashboard on the left
-  half, opens a Ghostty window for every running background session that lacks one, and STACKS them on the
-  right half (`_split_slot`): each collapsed to its title bar (`STRIP` 36px; Ghostty accepts it), the focused
-  one open in place with the remaining height. `focus_watch_loop` polls the frontmost app twice a second
-  (`lsappinfo`, not osascript) and re-stacks when a terminal window comes forward. Mode persists as
-  `settings.arrange` (`split`/`grid`) until ⊞ Align. `retile()` moves only windows whose cell changed
-  (`_placed`), in parallel; the buttons pass `force=True`.
+- **⊞ Align and ◧ Arrange are GONE (2026-11-09, PRs #19 + this one, Vincent's call):** buttons, `/api/align`,
+  `/api/arrange`, `_split_slot`, `focus_watch_loop`, `_place_dash` and the `settings.arrange` mode are all
+  removed (a leftover `arrange` key in `settings.json` is ignored). The in-page split replaced them. Ghostty
+  windows from ↗ App still tile on the card grid via `/api/layout`; `retile()` moves only windows whose cell
+  changed (`_placed`). Nothing sizes the dashboard's own browser window any more.
 - **Window rediscovery:** `_discover_windows()` rebuilds `_term_windows` from `ps` (each ↗ App Ghostty process
-  carries `claude attach '<id>'` on its command line), so a restart no longer orphans windows ("Aligned 0").
-  A window of a finished session still matches and rides in the stack until closed.
+  carries `claude attach '<id>'` on its command line), so a restart no longer orphans windows.
 - **Title colour chip (`CHIPS`, parallel to `PALETTE`):** Ghostty on macOS draws the title bar in the terminal
   background and has no separate title-bar colour (`window-titlebar-background` is GTK-only).
 - **Terminal tab = one bar above the terminal** (`.termbar`, built in `renderDrawer`): hint, auto-yes, ↗ App,
@@ -94,9 +91,6 @@ Config dir here is `~/.claude-home`, not `~/.claude`.
   Window-placement tests on a scratch port get undone by the live server re-tiling behind them. Test window
   code on the live server (merge, pull; it restarts itself), or stop the live one first. Page-only changes are fine on a
   scratch port, and need no restart once pulled: `web/index.html` is read from disk per request.
-- **⊞ Align (v0.8.1):** header button → `POST /api/align {cols, ids}`: sizes the dashboard's Chrome window
-  (System Events, window named "Overlook") to the screen's visible frame and `retile()`s every open terminal
-  window on demand — the layout POST only re-tiles on a CHANGE, so dragged windows never snapped back before.
 - **Grid = the dashboard's grid (v0.8.0):** the page POSTs `/api/layout {cols, ids}` whenever its card
   grid changes (column count from `gridTemplateColumns`, ids in card order; debounced on resize), and
   `window_slot` gives a session's terminal window the cell its card has (rows = ceil(n/cols), capped 4;
