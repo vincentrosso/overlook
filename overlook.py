@@ -142,11 +142,46 @@ def ui_log(body: dict) -> tuple[int, dict]:
 # ---------------------------------------------------------------- config dirs
 
 
+# A profile ties a project root to the Claude config dir its sessions run under, the same pairing as the
+# shell aliases `claude-nit` / `claude-home` (CLAUDE_CONFIG_DIR=~/.claude-nit claude). A launch picks its
+# profile from the folder: a repo under the NIT root runs as claude-nit, one under ~/Dropbox/development
+# as claude-home. Override with OVERLOOK_PROFILES="name=root=configdir;name=root=configdir".
+def _profiles() -> list[dict]:
+    spec = os.environ.get("OVERLOOK_PROFILES")
+    if spec:
+        rows = [x.split("=") for x in spec.split(";") if x.count("=") == 2]
+    else:
+        rows = [["claude-nit", str(HOME / "Dropbox" / "NIT America" / "development" / "gh_nitamerica"), str(HOME / ".claude-nit")],
+                ["claude-home", str(HOME / "Dropbox" / "development"), str(HOME / ".claude-home")]]
+    return [{"name": n.strip(), "root": str(Path(r.strip()).expanduser()).rstrip("/"),
+             "config": str(Path(c.strip()).expanduser())} for n, r, c in rows]
+
+
+PROFILES = _profiles()
+
+
+def root_dirs() -> list[str]:
+    """Project roots: $OVERLOOK_ROOTS (colon-separated) if set, else every profile's root."""
+    env = os.environ.get("OVERLOOK_ROOTS")
+    if env:
+        return [str(Path(r).expanduser()).rstrip("/") for r in env.split(":") if r]
+    return [p["root"] for p in PROFILES]
+
+
+def profile_for(path: str | None) -> dict | None:
+    """The profile whose root holds this path (longest root wins)."""
+    if not path:
+        return None
+    full = str(Path(path).expanduser()).rstrip("/") + "/"
+    hits = [p for p in PROFILES if full.startswith(p["root"] + "/")]
+    return max(hits, key=lambda p: len(p["root"])) if hits else None
+
+
 def config_dirs() -> list[Path]:
-    """Claude config dirs to read: $CLAUDE_CONFIG_DIR first, then ~/.claude."""
+    """Claude config dirs to read: $CLAUDE_CONFIG_DIR first, then each profile's, then ~/.claude."""
     out: list[Path] = []
     env = os.environ.get("CLAUDE_CONFIG_DIR")
-    for p in [env and Path(env).expanduser(), HOME / ".claude-home", HOME / ".claude"]:
+    for p in [env and Path(env).expanduser(), *[Path(x["config"]) for x in PROFILES], HOME / ".claude"]:
         if p and p.is_dir() and p not in out:
             out.append(p)
     return out
@@ -156,11 +191,14 @@ def claude_bin() -> str | None:
     return os.environ.get("OVERLOOK_CLAUDE") or shutil.which("claude")
 
 
-def claude_env(jid: str | None = None) -> dict:
+def claude_env(jid: str | None = None, config: str | None = None) -> dict:
     """Environment for a claude subprocess. With a job id, CLAUDE_CONFIG_DIR is
     the config dir that owns that job: several dirs can hold jobs/, and
     attach/logs/stop only see the one they are pointed at."""
     env = dict(os.environ)
+    if config:                      # a launch under a named profile
+        env["CLAUDE_CONFIG_DIR"] = config
+        return env
     dirs = config_dirs()
     if jid:
         jd = find_job_dir(jid)
@@ -176,13 +214,14 @@ def claude_env(jid: str | None = None) -> dict:
     return env
 
 
-def run_claude(args: list[str], timeout: float = 20, cwd: str | None = None, jid: str | None = None) -> tuple[int, str]:
+def run_claude(args: list[str], timeout: float = 20, cwd: str | None = None, jid: str | None = None,
+               config: str | None = None) -> tuple[int, str]:
     exe = claude_bin()
     if not exe:
         return 127, "claude CLI not found on PATH (set OVERLOOK_CLAUDE)"
     try:
         p = subprocess.run([exe, *args], capture_output=True, text=True,
-                           timeout=timeout, cwd=cwd, env=claude_env(jid))
+                           timeout=timeout, cwd=cwd, env=claude_env(jid, config))
         return p.returncode, (p.stdout + p.stderr)
     except subprocess.TimeoutExpired:
         return 124, "timed out"
@@ -389,8 +428,8 @@ def project_of(path: str | None) -> str | None:
     root, else the path itself. Returned as the full directory."""
     if not path:
         return None
-    for r in os.environ.get("OVERLOOK_ROOTS", str(HOME / "Dropbox" / "development")).split(":"):
-        rp = str(Path(r).expanduser()).rstrip("/") + "/"
+    for r in root_dirs():
+        rp = r + "/"
         if path.startswith(rp):
             rest = path[len(rp):].split("/")
             if rest and rest[0]:
@@ -697,13 +736,13 @@ def agents() -> list[dict]:
 
 
 def project_roots() -> list[str]:
-    """Directories offered in the launch picker: $OVERLOOK_ROOTS children."""
-    roots = os.environ.get("OVERLOOK_ROOTS", str(HOME / "Dropbox" / "development"))
+    """Directories offered in the launch picker: each root, then the git repos directly inside it."""
     out = []
-    for r in roots.split(":"):
-        rp = Path(r).expanduser()
+    for r in root_dirs():
+        rp = Path(r)
         if rp.is_dir():
-            out += [str(c) for c in sorted(rp.iterdir())
+            out.append(r)
+            out += [str(c) for c in sorted(rp.iterdir(), key=lambda c: c.name.lower())
                     if c.is_dir() and not c.name.startswith(".") and (c / ".git").exists()]
     return out
 
@@ -735,6 +774,13 @@ def launch(body: dict) -> tuple[int, dict]:
         return 400, {"error": f"not a directory: {cwd}"}
     if mode not in PERMISSION_MODES:
         return 400, {"error": "bad permission mode"}
+    cwd = str(Path(cwd).expanduser())
+    want = str(body.get("profile") or "").strip()
+    prof = next((p for p in PROFILES if p["name"] == want), None) if want else profile_for(cwd)
+    if want and not prof:
+        return 400, {"error": f"unknown profile: {want}"}
+    if prof and not Path(prof["config"]).is_dir():
+        return 400, {"error": f"profile {prof['name']}: no config dir at {prof['config']}"}
     args = ["--bg", "--agent", agent, "--permission-mode", mode]
     if name:
         args += ["--name", name]
@@ -743,11 +789,12 @@ def launch(body: dict) -> tuple[int, dict]:
             return 400, {"error": "bad model"}
         args += ["--model", model]
     args += ["--", prompt]
-    log(f"launch agent={agent} cwd={cwd} mode={mode}")
-    code, out = run_claude(args, timeout=60, cwd=str(Path(cwd).expanduser()))
+    log(f"launch agent={agent} cwd={cwd} mode={mode} profile={prof['name'] if prof else 'default'}")
+    code, out = run_claude(args, timeout=60, cwd=cwd, config=prof["config"] if prof else None)
     _live_cache["at"] = 0
     m = re.search(r"\b([0-9a-f]{8})\b", out) if code == 0 else None
     return (200 if code == 0 else 500), {"ok": code == 0, "id": m.group(1) if m else None,
+                                          "profile": prof["name"] if prof else None,
                                           "output": out.strip()[-2000:]}
 
 
@@ -1549,7 +1596,7 @@ class Handler(BaseHTTPRequestHandler):
             if p == "/api/agents":
                 return self._send(200, {"agents": agents()})
             if p == "/api/dirs":
-                return self._send(200, {"dirs": dirs()})
+                return self._send(200, {"dirs": dirs(), "roots": root_dirs(), "profiles": PROFILES})
             if p == "/api/settings":
                 return self._send(200, {"settings": load_settings(), "models": MODELS, "path": str(SETTINGS)})
             if p == "/api/info":
