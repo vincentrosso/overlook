@@ -356,8 +356,8 @@ function renderStatus() {
       ${progressHTML(s)}
       <div class="detail">${esc(s.detail || "—")}</div>
       <div class="intent" title="${esc(s.intent)}">“${esc(s.intent)}”</div>
-      ${s.closing ? `<div style="margin:2px 0 10px"><button class="big" disabled>Deleting — wrapping up first…</button></div>` : ""}
-      ${s.alive && !s.finished && !s.closing ? `<div style="margin:2px 0 10px;display:flex;gap:6px;flex-wrap:wrap;align-items:center">${c === "input" && s.kind !== "interactive" ? `<button class="big primary" data-yes="${esc(s.id)}">✔ Yes / Go</button>` : ""}${s.kind !== "interactive" ? `<button class="big" data-wrap="${esc(s.id)}" title="Send /wrap: wrap up. The session keeps running.">⏏ Wrap</button>` : ""}<button class="big" data-open="${esc(s.id)}" title="${s.kind === "interactive" ? "Bring your terminal app forward" : "Attach in a new terminal window (tiled + colour-coded)"}">↗ App</button>${s.autoYes ? `<span class="hint">auto-yes on</span>` : ""}</div>` : ""}
+      ${s.closing || EXITING[s.id] ? `<div style="margin:2px 0 10px"><button class="big" disabled>Deleting — wrapping up first…</button></div>` : ""}
+      ${s.alive && !s.finished && !s.closing && !EXITING[s.id] ? `<div style="margin:2px 0 10px;display:flex;gap:6px;flex-wrap:wrap;align-items:center">${c === "input" && s.kind !== "interactive" ? `<button class="big primary" data-yes="${esc(s.id)}">✔ Yes / Go</button>` : ""}${s.kind !== "interactive" ? `<button class="big" data-wrap="${esc(s.id)}" title="Send /wrap: wrap up. The session keeps running.">⏏ Wrap</button><button class="big danger" data-termexit="${esc(s.id)}" title="Wrap up, exit, then delete the session and its card">⏻ Close</button>` : ""}<button class="big" data-open="${esc(s.id)}" title="${s.kind === "interactive" ? "Bring your terminal app forward" : "Attach in a new terminal window (tiled + colour-coded)"}">↗ App</button>${s.autoYes ? `<span class="hint">auto-yes on</span>` : ""}</div>` : ""}
       ${s.alive && s.kind !== "interactive" && s.term_line ? `<div class="term hint mono" title="${esc(s.term_line)}">${esc(s.term_line)}</div>` : ""}
       <div class="meta">
         ${s.autoYes ? `<span class="tag" style="color:var(--done)">auto-yes</span>` : ""}
@@ -450,7 +450,8 @@ async function termExit(id) {
   catch (err) { delete EXITING[id]; toast("Couldn't exit: " + err.message, 8000); return; }
   const h = $("#termhint"); if (h) h.textContent = "Exiting: wrapping up… the terminal and card go away on their own when it's done.";
   const b = $("#termexit"); if (b) { b.disabled = true; b.textContent = "Exiting…"; }
-  toast("Exiting — wrapping up first");
+  document.querySelectorAll(`[data-termexit="${id}"]`).forEach(x => { x.disabled = true; x.textContent = "Closing…"; });
+  toast("Closing: wrapping up first, then the session and its card are deleted", 5000);
 }
 setInterval(() => { if (Object.keys(EXITING).length || S.sessions.some(s => s.closing)) refresh(); }, 5000);   // keep polling even when the tab is hidden
 function killTerm() {
@@ -516,7 +517,7 @@ function renderStack(focus = false) {
     // the card's top two lines, on one row: project (→ where it is working now), then name + status
     const h = `<span class="pj mono" title="${esc(s.cwd)}${moved ? " — now working in " + esc(s.work) : ""}"><b>${esc(base(s.cwd))}</b>${moved ? ` <span class="work">→ <b>${esc(base(s.work))}</b></span>` : ""}</span><span class="dot" style="background:${esc(s.color)}"></span><span class="nm">${esc(s.name)}</span><span class="pill st-${c}">${c === "input" ? "needs you" : esc(s.state)}</span><span class="tl hint mono"></span>`
       + (c === "input" ? `<button class="btn primary" data-yes="${esc(s.id)}">✔ Yes / Go</button>` : "")
-      + `<button class="btn" data-wrap="${esc(s.id)}" title="Send /wrap: wrap up. The session keeps running.">⏏ Wrap</button><button class="btn" data-sd="${esc(s.id)}" title="Open the full panel: Stop, Exit, auto-yes, Reconnect, ↗ App">⤢</button>`;
+      + `<button class="btn" data-wrap="${esc(s.id)}" title="Send /wrap: wrap up. The session keeps running.">⏏ Wrap</button><button class="btn danger" data-termexit="${esc(s.id)}" title="Wrap up, exit, then delete the session and its card" ${EXITING[s.id] || s.closing ? "disabled" : ""}>${EXITING[s.id] || s.closing ? "Closing…" : "⏻ Close"}</button><button class="btn" data-sd="${esc(s.id)}" title="Open the full panel: Stop, Exit, auto-yes, Reconnect, ↗ App">⤢</button>`;
     if (b._h !== h) { b.innerHTML = h; b._h = h; b._l = null; }     // untouched bars keep their hover and half-finished clicks
     if (b._l !== line) { const tl = b.querySelector(".tl"); tl.textContent = line; tl.title = line; b._l = line; }   // the line ticks every poll: only its text node changes, the bar is not repainted
     if (s.id === S.tsel) { box.style.order = 2 * i + 1; box.style.setProperty("--sc", s.color); }
