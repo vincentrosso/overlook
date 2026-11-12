@@ -1479,6 +1479,41 @@ def set_winsize(fd: int, cols: int, rows: int) -> None:
     fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack("HHHH", rows, cols, 0, 0))
 
 
+def ghostty_size(jid: str) -> tuple[int, int] | None:
+    """(cols, rows) of the Ghostty window showing this session, else None. The in-page terminal
+    attaches at THIS size while that window is open, so it never shrinks the session under Ghostty
+    (a session has one screen size: the last client to resize sets it for every viewer)."""
+    _discover_windows()
+    gp = _term_windows.get(jid)
+    if not gp:
+        return None
+    try:
+        out = subprocess.run(["ps", "-axo", "pid=,ppid=,tty="], capture_output=True, text=True, timeout=5).stdout
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    kids: dict[int, list[tuple[int, str]]] = {}
+    for line in out.splitlines():
+        f = line.split()
+        if len(f) == 3 and f[0].isdigit() and f[1].isdigit():
+            kids.setdefault(int(f[1]), []).append((int(f[0]), f[2]))
+    todo = [gp]
+    while todo:
+        for pid, tty in kids.get(todo.pop(0), []):
+            if tty not in ("??", "-"):
+                try:
+                    fd = os.open("/dev/" + tty, os.O_RDONLY | os.O_NOCTTY | os.O_NONBLOCK)
+                    try:
+                        rows, cols = struct.unpack("HHHH", fcntl.ioctl(fd, termios.TIOCGWINSZ, b"\0" * 8))[:2]
+                    finally:
+                        os.close(fd)
+                    if cols >= 20 and rows >= 5:
+                        return cols, rows
+                except OSError:
+                    pass
+            todo.append(pid)
+    return None
+
+
 def rewinch_other_clients(skip_pid: int) -> int:
     """A background session has ONE screen size: whichever attached client resized last wins. The
     in-page terminal attaches at its small bar size (~77x5), which shrinks the session inside the
@@ -1568,7 +1603,9 @@ class Handler(BaseHTTPRequestHandler):
         if not self._origin_ok():
             return self._send(403, {"error": "bad origin"})
         try:
-            proc, fd = spawn_terminal(jid, int(q.get("cols", ["100"])[0]), int(q.get("rows", ["30"])[0]))
+            lock = ghostty_size(jid)
+            cols, rows = lock or (int(q.get("cols", ["100"])[0]), int(q.get("rows", ["30"])[0]))
+            proc, fd = spawn_terminal(jid, cols, rows)
         except Exception as e:
             return self._send(404, {"error": str(e)})
         accept = base64.b64encode(hashlib.sha1((key + WS_GUID).encode()).digest()).decode()
@@ -1580,6 +1617,9 @@ class Handler(BaseHTTPRequestHandler):
         def send(op: int, data: bytes) -> None:
             with wlock:
                 self.wfile.write(ws_frame(op, data))
+
+        if lock:   # a Ghostty window owns this session's size: the page renders at it (scaled), never resizes it
+            send(1, json.dumps({"lock": list(lock)}).encode())
 
         def pump() -> None:  # pty -> browser
             while True:
@@ -1619,7 +1659,7 @@ class Handler(BaseHTTPRequestHandler):
                         m = json.loads(data)
                     except json.JSONDecodeError:
                         continue
-                    if isinstance(m.get("resize"), list) and len(m["resize"]) == 2:
+                    if isinstance(m.get("resize"), list) and len(m["resize"]) == 2 and not lock:
                         set_winsize(fd, *m["resize"])
                     elif isinstance(m.get("input"), str):
                         os.write(fd, m["input"].encode())

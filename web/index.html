@@ -471,7 +471,7 @@ function tint(hex, amt = 0.16) {  // same blend as the server's tint(): a little
 function mountTerm(id, fresh = false, color = null, box = $("#termbox")) {
   if (!box) return;
   if (!window.Terminal) { box.innerHTML = `<div class="empty">xterm.js didn't load (offline?). Use ↗ App.</div>`; return; }
-  if (TERM && TERM.id === id && !fresh && TERM.ws.readyState <= 1) { box.replaceChildren(TERM.el); TERM.fit.fit(); TERM.term.focus(); return; }
+  if (TERM && TERM.id === id && !fresh && TERM.ws.readyState <= 1) { box.replaceChildren(TERM.el); TERM.size(); TERM.term.focus(); return; }
   killTerm();
   const el = document.createElement("div"); el.className = "xt"; box.replaceChildren(el);
   const term = new Terminal({ fontSize: 16, lineHeight: 1.15, fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace", cursorBlink: true, scrollback: 8000,
@@ -479,7 +479,20 @@ function mountTerm(id, fresh = false, color = null, box = $("#termbox")) {
   const fit = new FitAddon.FitAddon(); term.loadAddon(fit); term.open(el); fit.fit();
   const ws = new WebSocket(`ws://${location.host}/ws/term/${encodeURIComponent(id)}?cols=${term.cols}&rows=${term.rows}`);
   ws.binaryType = "arraybuffer";
-  ws.onmessage = e => { if (e.data instanceof ArrayBuffer) term.write(new Uint8Array(e.data)); };
+  // While a Ghostty window shows this session the server sends {lock:[cols,rows]}: render at Ghostty's
+  // size, scaled down to the box's width and pinned to its bottom (where the prompt is), instead of
+  // fitting — fitting would resize the session and shrink the Ghostty window with it.
+  let lock = null;
+  const size = () => {
+    if (!lock) { el.style.transform = ""; try { fit.fit(); } catch (_) {} return; }
+    const b = el.parentElement || box, w = term.element.offsetWidth, h = term.element.offsetHeight;
+    const sc = Math.min(1, b.clientWidth / Math.max(1, w)), ty = Math.min(0, b.clientHeight - h * sc);
+    b.style.overflow = "hidden"; el.style.transformOrigin = "0 0"; el.style.transform = `translateY(${ty}px) scale(${sc})`;
+  };
+  ws.onmessage = e => {
+    if (e.data instanceof ArrayBuffer) { term.write(new Uint8Array(e.data)); return; }
+    try { const m = JSON.parse(e.data); if (Array.isArray(m.lock)) { lock = m.lock; term.resize(lock[0], lock[1]); requestAnimationFrame(size); } } catch (_) {}
+  };
   ws.onclose = () => {
     const s = S.sessions.find(x => x.id === id), gone = s && !s.alive;
     uilog("term-close", { gone: !!gone, dwell: Date.now() - UI.opened });   // after `gone` exists: read first, it threw and skipped the rest
@@ -494,9 +507,9 @@ function mountTerm(id, fresh = false, color = null, box = $("#termbox")) {
   });
   term.onData(d => { if (ws.readyState === 1) ws.send(JSON.stringify({ input: d })); });
   term.onResize(({ cols, rows }) => { if (ws.readyState === 1) ws.send(JSON.stringify({ resize: [cols, rows] })); });
-  const ro = new ResizeObserver(() => { try { fit.fit(); } catch (_) {} }); ro.observe(el);
+  const ro = new ResizeObserver(() => size()); ro.observe(el);
   term.focus();
-  TERM = { id, term, ws, fit, el, ro };
+  TERM = { id, term, ws, fit, el, ro, size };
 }
 
 // ---------- live terminals in the page: the right column of Status, no terminal app needed
