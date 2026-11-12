@@ -166,6 +166,17 @@ Config dir here is `~/.claude-home`, not `~/.claude`.
 - **`--app`:** opens the dashboard as a Chrome app window (`open -na "Google Chrome" --args --app=URL`).
 - **Security:** Host check on all requests; Origin/Sec-Fetch and JSON-only on POST.
 
+- **Exit command missing in a profile (2026-11-11, PR #28):** slash commands are per profile.
+  `~/.claude-home/commands` held only `wrap.md`, so every Close/Stop there typed the exit command, got
+  `Unknown command`, and the card sat on "Closing…" for 20 min. `type_exit()` checks `has_command()`
+  (profile `commands/`+`skills/`, project `.claude/`); if absent it types `/wrap` and
+  `pending_close_loop` stops the session when that turn ends (`_stop_when_done`). A new profile still
+  needs `bye.md` symlinked for the proper path. **When Close hangs, read the session's screen first.**
+- **Copy out of the in-page terminal (PR #28):** `claude attach` turns on mouse tracking, so a drag is
+  Claude's own selection; it replies with OSC 52 (and `pbcopy`). xterm.js ignores OSC 52 by default, so
+  `mountTerm` registers a handler; ⌥-drag (`macOptionClickForcesSelection`) is xterm's selection. Both
+  go through `copyText()` and toast. NOT browser-tested yet.
+
 ## Verified vs not
 
 Verified: API routes, cross-origin refusal, real launch, Yes on a question menu and on a
