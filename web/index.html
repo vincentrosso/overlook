@@ -465,13 +465,27 @@ function tint(hex, amt = 0.16) {  // same blend as the server's tint(): a little
   const c = [1, 3, 5].map(i => parseInt(hex.slice(i, i + 2), 16)), b = [0x0b, 0x0d, 0x11];
   return "#" + c.map((v, i) => Math.round(b[i] + (v - b[i]) * amt).toString(16).padStart(2, "0")).join("");
 }
+// Copy out of a terminal. Claude's screen takes the mouse, so a plain drag is ITS selection and it
+// answers with OSC 52; xterm.js drops that unless handled. ⌥-drag is xterm's own selection (any text
+// on screen, also when the app ignores the mouse). Both land on the clipboard and say so.
+async function copyText(text) {
+  if (!text) return;
+  try { await navigator.clipboard.writeText(text); }
+  catch (_) {
+    const ta = document.createElement("textarea"), back = document.activeElement;
+    ta.value = text; ta.style.cssText = "position:fixed;opacity:0"; document.body.appendChild(ta); ta.select();
+    const ok = document.execCommand("copy"); ta.remove(); back?.focus?.();
+    if (!ok) return toast("Couldn't copy: the browser blocked the clipboard", 5000);
+  }
+  toast(`Copied ${text.length.toLocaleString()} chars`, 1800);
+}
 function mountTerm(id, fresh = false, color = null, box = $("#termbox")) {
   if (!box) return;
   if (!window.Terminal) { box.innerHTML = `<div class="empty">xterm.js didn't load (offline?). Use ↗ App.</div>`; return; }
   if (TERM && TERM.id === id && !fresh && TERM.ws.readyState <= 1) { box.replaceChildren(TERM.el); TERM.fit.fit(); TERM.term.focus(); return; }
   killTerm();
   const el = document.createElement("div"); el.className = "xt"; box.replaceChildren(el);
-  const term = new Terminal({ fontSize: 16, lineHeight: 1.15, fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace", cursorBlink: true, scrollback: 8000,
+  const term = new Terminal({ fontSize: 16, lineHeight: 1.15, fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace", cursorBlink: true, scrollback: 8000, macOptionClickForcesSelection: true,
     theme: { background: "#000", foreground: "#e6e1d8", cursor: color || "#f4ede4", selectionBackground: "#3d424d" } });
   const fit = new FitAddon.FitAddon(); term.loadAddon(fit); term.open(el); fit.fit();
   const ws = new WebSocket(`ws://${location.host}/ws/term/${encodeURIComponent(id)}?cols=${term.cols}&rows=${term.rows}`);
@@ -485,6 +499,12 @@ function mountTerm(id, fresh = false, color = null, box = $("#termbox")) {
     setTimeout(refresh, 1200);
   };
   ws.onerror = () => toast("Terminal connection failed", 5000);
+  term.parser.registerOscHandler(52, d => {
+    const b64 = d.slice(d.indexOf(";") + 1);
+    if (b64 && b64 !== "?") try { copyText(new TextDecoder().decode(Uint8Array.from(atob(b64), c => c.charCodeAt(0)))); } catch (_) {}
+    return true;
+  });
+  el.addEventListener("mouseup", () => setTimeout(() => copyText(term.getSelection()), 0));   // ⌥-drag
   term.attachCustomKeyEventHandler(ev => {
     if (ev.type === "keydown" && ev.ctrlKey && ev.shiftKey && !ev.metaKey && !ev.altKey && ev.code === "KeyW") { ev.preventDefault(); termWrap(); return false; }
     return true;
@@ -545,7 +565,7 @@ async function renderDrawer() {
     const head = `<div class="seg" style="margin-bottom:16px">${tabs.length > 1 ? tabs.map(t => `<button data-tab="${t}" class="big ${d.tab === t ? "on" : ""}">${t[0].toUpperCase() + t.slice(1)}</button>`).join("") : ""}<span class="grow"></span>${acts}</div>`;
     if (d.tab === "terminal") {
       // one bar, above the terminal: everything that was split between the drawer head and the strip under the terminal
-      $("#dbd").innerHTML = `<div class="termbar"><span class="hint" id="termhint">Live. Type here as you would in a terminal; Ctrl+Z detaches, the agent keeps running. ⏏ Wrap (Ctrl+Shift+W) wraps up; ⏻ Exit wraps, exits and deletes the session.</span>${s.alive && !s.finished ? `<label class="hint" title="Answer “yes / go” for me when it's stuck 20s+ (max 10/hour; permission prompts get “yes, don't ask again”)" style="display:inline-flex;gap:6px;align-items:center;cursor:pointer;white-space:nowrap"><input type="checkbox" id="autoYes" data-auto="${esc(s.id)}" ${s.autoYes ? "checked" : ""}> auto-yes</label>` : ""}${s.finished ? appBtn : acts}<button class="big primary" id="termclose" data-closesess="${esc(s.id)}" style="${s.finished ? "" : "display:none"}">🗑 Delete session</button><button class="big danger" id="termexit" data-termexit="${esc(s.id)}" title="Wrap up, exit, then remove this terminal and card" ${EXITING[s.id] ? "disabled" : ""}>${EXITING[s.id] ? "Exiting…" : "⏻ Exit"}</button><button class="btn" data-reterm="${esc(s.id)}">↻ Reconnect</button></div><div id="termbox" style="--sc:${esc(s.color)}"></div>`;
+      $("#dbd").innerHTML = `<div class="termbar"><span class="hint" id="termhint">Live. Type here as you would in a terminal; Ctrl+Z detaches, the agent keeps running. Drag copies (⌥-drag selects anything). ⏏ Wrap (Ctrl+Shift+W) wraps up; ⏻ Exit wraps, exits and deletes the session.</span>${s.alive && !s.finished ? `<label class="hint" title="Answer “yes / go” for me when it's stuck 20s+ (max 10/hour; permission prompts get “yes, don't ask again”)" style="display:inline-flex;gap:6px;align-items:center;cursor:pointer;white-space:nowrap"><input type="checkbox" id="autoYes" data-auto="${esc(s.id)}" ${s.autoYes ? "checked" : ""}> auto-yes</label>` : ""}${s.finished ? appBtn : acts}<button class="big primary" id="termclose" data-closesess="${esc(s.id)}" style="${s.finished ? "" : "display:none"}">🗑 Delete session</button><button class="big danger" id="termexit" data-termexit="${esc(s.id)}" title="Wrap up, exit, then remove this terminal and card" ${EXITING[s.id] ? "disabled" : ""}>${EXITING[s.id] ? "Exiting…" : "⏻ Exit"}</button><button class="btn" data-reterm="${esc(s.id)}">↻ Reconnect</button></div><div id="termbox" style="--sc:${esc(s.color)}"></div>`;
       mountTerm(s.id, false, s.color);
     } else if (d.tab === "overview") {
       $("#dbd").innerHTML = head + progressHTML(s) + `<dl class="kv">
