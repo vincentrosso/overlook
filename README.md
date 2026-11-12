@@ -45,13 +45,13 @@ permission mode and an optional model override.
   if needed, then runs `claude rm`, deleting the session and its worktree when
   that is safe, and drops the card. Highlighted after a Wrap. **✕ Close
   finished** in the filter bar does it for every done / idle / failed job at once.
-- **⏏ Wrap** on any live background session: types `/wrape`, which runs the
+- **⏏ Wrap** on any live background session: types `/bye`, which runs the
   `/wrap` wrap-up (CLAUDE.md, notes, memory) and then stops the job itself.
   Refused while a permission or menu prompt is up; answer it first. Override
   the command with `OVERLOOK_WRAP_TEXT`.
 - **Terminal** tab: the session itself, attached inside the dashboard. Ctrl+Z
   detaches (the agent keeps running); ↻ Reconnect attaches again. **⏏ Wrap**
-  (or Ctrl+Shift+W inside the terminal) types `/wrape` into it; **⏻ Exit** does
+  (or Ctrl+Shift+W inside the terminal) types `/bye` into it; **⏻ Exit** does
   that and then, once the session has exited, Closes it and removes the card.
 - Every view has a URL: `#status`, `#hub`, and `#s/<session id>/terminal` for a
   session's terminal, so you can bookmark or reload straight into one.

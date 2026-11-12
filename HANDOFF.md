@@ -32,9 +32,9 @@ Config dir here is `~/.claude-home`, not `~/.claude`.
 - **Yes / Go (`poke`):** there is no `claude send`. It reads the screen with `claude logs`,
   picks keys (`yes_plan`), runs `claude attach` in a pty, sends keys, then Ctrl+Z to detach.
   Text and Enter must be separate writes, or the Enter is swallowed as paste.
-- **Wrap (`POST /api/sessions/<id>/wrap`, v0.7):** `poke(jid, text=WRAP_TEXT)` types `/wrape `
+- **Wrap (`POST /api/sessions/<id>/wrap`, v0.7):** `poke(jid, text=WRAP_TEXT)` types `/bye `
   through the same pty path. The trailing space closes the slash picker so Enter submits the
-  typed command, not the highlighted suggestion. Overlook does NOT stop the job: `/wrape`'s
+  typed command, not the highlighted suggestion. Overlook does NOT stop the job: `/bye`'s
   own last step is `claude stop` on itself, after the wrap report is written. Refused (409)
   when `yes_plan` sees a permission/menu prompt, because the keys would land in the picker.
 - **Live terminal line on cards (`term_line`):** `term_line_loop` runs `claude logs` per alive background
@@ -85,9 +85,9 @@ Config dir here is `~/.claude-home`, not `~/.claude`.
   and hands it back on close. A separate `#terms` nav view was built first and removed the same day: Vincent
   wanted the terminals beside the cards, not instead of them. Bar switching was tested with injected fake
   sessions only.
-- **⏏ Wrap types `/wrap`, not `/wrape` (2026-11-09, Vincent's call):** the Wrap buttons (cards, split bars,
-  panel, Ctrl+Shift+W) wrap and leave the session RUNNING. Stop, ⏻ Exit and 🗑 Delete still type `/wrape`
-  (`EXIT_TEXT`), because they need the session to exit. `_exit_sent` records when `/wrape` was typed; a plain
+- **⏏ Wrap types `/wrap`, not `/bye` (2026-11-09, Vincent's call):** the Wrap buttons (cards, split bars,
+  panel, Ctrl+Shift+W) wrap and leave the session RUNNING. Stop, ⏻ Exit and 🗑 Delete still type `/bye`
+  (`EXIT_TEXT`), because they need the session to exit. `_exit_sent` records when `/bye` was typed; a plain
   `/wrap` must not count as "exit pending", or Close would wait forever for a session that never exits.
 - **Counts lag by design upstream:** card state comes from each job's `state.json`, which Claude Code writes
   after a turn ends; Overlook adds at most the 4s page poll (`claude agents` is cached 10s but only feeds
@@ -108,14 +108,14 @@ Config dir here is `~/.claude-home`, not `~/.claude`.
   overlook` when it differs from the launch cwd, the drawer header shows it, and the Ghostty/iTerm
   window title is `<name> · <project>`. Background jobs now read their transcript too (mtime-cached).
 - **Everything that closes a session wraps first (v0.8.0):** `close_session` on a LIVE background
-  session types `/wrape` (skipped if `settings.wrapped[id]` is <30 min old, e.g. the term tab just
+  session types `/bye` (skipped if `settings.wrapped[id]` is <30 min old, e.g. the term tab just
   typed it), records it in `_pending_close`, returns **202 `{pending:"wrapping"}`**, and
   `pending_close_loop` (5s) `claude rm`s it once the daemon is gone — after 20 min still alive it
   stops then rms, so a Close is never silently dropped. Dead sessions rm at once (200). Interactive
   ones are refused (409). Cards show `closing` as a disabled "Closing — wrapping up first…" and hide
   the actions. `stop_session` does the same wrap-first dance (202) unless `{force:true}` — the UI's
   Stop button sends force on **Shift/Alt-click** — or the session is dead/just wrapped (<10 min).
-  ⏻ Exit on the term tab is now: type `/wrape` into the live xterm, then `/close`; `finishExit` is gone,
+  ⏻ Exit on the term tab is now: type `/bye` into the live xterm, then `/close`; `finishExit` is gone,
   `refresh()` just drops the drawer and toasts when the card disappears. `close-finished` returns
   `closed` / `wrapping` / `failed`.
 - **URL = state (v0.7.6):** `#status`, `#hub`, `#s/<id>/<tab>`, `#a/<agent>`; `syncHash()` on
@@ -140,7 +140,7 @@ Config dir here is `~/.claude-home`, not `~/.claude`.
 - **Rename (`POST /api/sessions/<id>/rename`, v0.7):** `settings.names[id]` overrides `name` in
   `sessions()` (`renamed: true`). Not pushed into the CLI: `state.json` is daemon-owned and
   `/rename` via pty would cost an attach per edit.
-- **Wrap & exit on the term tab (v0.7):** `termWrap()` writes `/wrape ` then, 400ms later, `\r`
+- **Wrap & exit on the term tab (v0.7):** `termWrap()` writes `/bye ` then, 400ms later, `\r`
   over the live websocket (no second attach). Bound to Ctrl+Shift+W via
   `attachCustomKeyEventHandler`; Cmd+Shift+W is Chrome's close-window, so not that.
 - **Terminal input mid-panel (v0.7):** `.xt` is `--term-h` (54%) of `#termbox`, top-anchored.
