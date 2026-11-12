@@ -439,7 +439,7 @@ function termWrap(quiet = false) {
   if (!quiet) toast("Sent /wrap — it wraps up and keeps running");
   setTimeout(refresh, 2500); return true;
 }
-// ⏻ Exit = wrap, exit, delete. The SERVER types /wrape (the ⏏ Wrap button's /wrap never exits);
+// ⏻ Exit = wrap, exit, delete. The SERVER types /bye (the ⏏ Wrap button's /wrap never exits);
 // /close then waits server-side and `claude rm`s once the session has exited. EXITING
 // only drives the button text; refresh() drops the drawer when the card disappears.
 const EXITING = {};
