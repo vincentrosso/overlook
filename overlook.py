@@ -1479,6 +1479,31 @@ def set_winsize(fd: int, cols: int, rows: int) -> None:
     fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack("HHHH", rows, cols, 0, 0))
 
 
+def rewinch_other_clients(skip_pid: int) -> int:
+    """A background session has ONE screen size: whichever attached client resized last wins. The
+    in-page terminal attaches at its small bar size (~77x5), which shrinks the session inside the
+    user's Ghostty window too, and nothing tells Ghostty to put its size back when the bar closes.
+    SIGWINCH makes every other claude client on a real tty re-read and re-send its own size."""
+    n = 0
+    try:
+        out = subprocess.run(["ps", "-axo", "pid=,tty=,comm="], capture_output=True, text=True, timeout=5).stdout
+    except (OSError, subprocess.TimeoutExpired):
+        return 0
+    for line in out.splitlines():
+        parts = line.split(None, 2)
+        if len(parts) < 3 or parts[1] in ("??", "-") or Path(parts[2]).name != "claude":
+            continue
+        pid = int(parts[0])
+        if pid == skip_pid:
+            continue
+        try:
+            os.kill(pid, signal.SIGWINCH)
+            n += 1
+        except OSError:
+            pass
+    return n
+
+
 def spawn_terminal(jid: str, cols: int, rows: int) -> tuple[subprocess.Popen, int]:
     """`claude attach <id>` on its own pty. Ctrl+Z inside detaches; the session keeps running."""
     s_ = next((x for x in sessions() if x["id"] == jid), None)
@@ -1614,7 +1639,7 @@ class Handler(BaseHTTPRequestHandler):
                 os.close(fd)
             except OSError:
                 pass
-            log(f"terminal {jid} closed (exit {proc.poll()})")
+            log(f"terminal {jid} closed (exit {proc.poll()}); re-sized {rewinch_other_clients(proc.pid)} other client(s)")
 
     def do_GET(self):
         if not self._host_ok():
