@@ -306,7 +306,7 @@ const stClass = st => {
 };
 // One rule for every "needs you" surface (count, filter, pill, pulse, alerts, Yes / Go): the server's
 // s.needs. A state that merely READS as input on a dead or closing session is idle, not a call for you.
-const cls = s => { if (s.needs) return "input"; const c = cls(s); return c === "input" ? "idle" : c; };
+const cls = s => { if (s.needs) return "input"; const c = stClass(s.state); return c === "input" ? "idle" : c; };
 const ago = iso => {
   if (!iso) return "";
   const s = (Date.now() - Date.parse(iso)) / 1000;
