@@ -304,6 +304,9 @@ const stClass = st => {
   if (/fail|error|crash|kill|stop/.test(st)) return "failed";
   return "idle";
 };
+// One rule for every "needs you" surface (count, filter, pill, pulse, alerts, Yes / Go): the server's
+// s.needs. A state that merely READS as input on a dead or closing session is idle, not a call for you.
+const cls = s => { if (s.needs) return "input"; const c = cls(s); return c === "input" ? "idle" : c; };
 const ago = iso => {
   if (!iso) return "";
   const s = (Date.now() - Date.parse(iso)) / 1000;
@@ -330,7 +333,7 @@ function progressHTML(s) {
   if (p.pct != null)
     h += `<div class="prog"><div class="bar"><i style="width:${Math.min(100, p.pct)}%"></i></div>
       <div class="nums"><span>${p.den != null ? `<b>${fmtN(p.num)}</b> / ${fmtN(p.den)}` : ""}</span><b>${p.pct}%</b></div></div>`;
-  if (p.etaAt && stClass(s.state) !== "done") {
+  if (p.etaAt && cls(s) !== "done") {
     const left = p.etaAt - Date.now() / 1000, late = left < 0;
     h += `<div style="margin:4px 0 6px"><span class="eta ${late ? "late" : p.etaSource === "estimated" ? "est" : ""}" title="${esc(p.etaText || "estimated from progress rate" + (p.ratePerMin ? ` (${p.ratePerMin}/min)` : ""))}">
       ${p.etaSource === "estimated" ? "≈ " : ""}ETA ${clock(p.etaAt)} · ${late ? dur(left) + " late" : "in " + dur(left)}</span></div>`;
@@ -340,24 +343,24 @@ function progressHTML(s) {
 const FILTERS = [["all", "All"], ["input", "Needs you"], ["working", "Working"], ["done", "Done"]];
 function renderStatus() {
   const counts = { all: S.sessions.length, working: 0, input: 0, done: 0, failed: 0, idle: 0 };
-  S.sessions.forEach(s => counts[stClass(s.state)]++);
+  S.sessions.forEach(s => counts[cls(s)]++);
   $("#summary").innerHTML = FILTERS.map(([k, l]) =>
     `<button class="big ${S.sfilter === k ? "on" : ""} ${k === "input" && counts.input ? "alert" : ""}" data-f="${k}">${l} <span class="n">${counts[k]}</span></button>`).join("")
     + (S.sessions.some(s => s.finished) ? `<span class="grow"></span><button class="big danger" data-closeall title="Delete every finished background session (done / idle / failed): stop + claude rm; working ones are left alone">🗑 Delete finished <span class="n">${S.sessions.filter(s => s.finished).length}</span></button>` : "");
   const q = $("#sq").value.toLowerCase();
   const list = S.sessions.filter(s =>
-    (S.sfilter === "all" || stClass(s.state) === S.sfilter) &&
+    (S.sfilter === "all" || cls(s) === S.sfilter) &&
     (!q || [s.name, s.detail, s.intent, s.cwd, s.id, s.agent].join(" ").toLowerCase().includes(q)));
   $("#sessions").innerHTML = list.length ? list.map(s => {
-    const c = stClass(s.state);
+    const c = cls(s);
     return `<div class="card sess st-${c}" data-s="${esc(s.id)}" style="--sc:${esc(s.color)}">
       <div class="cwd" title="${esc(s.cwd)}${s.work && s.work !== s.cwd ? " — now working in " + esc(s.work) : ""}"><bdi>${esc(shortPath(s.cwd).split("/").slice(0, -1).join("/"))}${shortPath(s.cwd).includes("/") ? "/" : ""}<b>${esc(shortPath(s.cwd).split("/").pop())}</b>${s.work && s.work !== s.cwd ? ` <span class="work">→ <b>${esc(shortPath(s.work).split("/").pop())}</b></span>` : ""}</bdi></div>
-      <h3><span class="dot" style="background:${esc(s.color)}" data-color="${esc(s.id)}" title="Session colour — click to change"></span><span class="nm">${esc(s.name)}</span><button class="ren" data-rename="${esc(s.id)}" title="Rename">✎</button> <span class="right pill st-${c} ${c === "working" && s.status === "active" ? "pulse" : ""}">${c === "input" ? "needs you" : esc(s.state)}</span></h3>
+      <h3><span class="dot" style="background:${esc(s.color)}" data-color="${esc(s.id)}" title="Session colour — click to change"></span><span class="nm">${esc(s.name)}</span><button class="ren" data-rename="${esc(s.id)}" title="Rename">✎</button> <span class="right pill st-${c} ${c === "working" && s.status === "active" ? "pulse" : ""}">${c === "input" ? (s.prompt ? "needs you · " + esc(s.prompt) : "needs you") : esc(s.state)}</span></h3>
       ${progressHTML(s)}
       <div class="detail">${esc(s.detail || "—")}</div>
       <div class="intent" title="${esc(s.intent)}">“${esc(s.intent)}”</div>
       ${s.closing || EXITING[s.id] ? `<div style="margin:2px 0 10px"><button class="big" disabled>Deleting — wrapping up first…</button></div>` : ""}
-      ${s.alive && !s.finished && !s.closing && !EXITING[s.id] ? `<div style="margin:2px 0 10px;display:flex;gap:6px;flex-wrap:wrap;align-items:center">${c === "input" && s.kind !== "interactive" ? `<button class="big primary" data-yes="${esc(s.id)}">✔ Yes / Go</button>` : ""}${s.kind !== "interactive" ? `<button class="big" data-wrap="${esc(s.id)}" title="Send /wrap: wrap up. The session keeps running.">⏏ Wrap</button><button class="big danger" data-termexit="${esc(s.id)}" title="Wrap up, exit, then delete the session and its card">⏻ Close</button>` : ""}<button class="big" data-open="${esc(s.id)}" title="${s.kind === "interactive" ? "Bring your terminal app forward" : "Attach in a new terminal window (tiled + colour-coded)"}">↗ App</button>${s.autoYes ? `<span class="hint">auto-yes on</span>` : ""}</div>` : ""}
+      ${s.alive && !s.finished && !s.closing && !EXITING[s.id] ? `<div style="margin:2px 0 10px;display:flex;gap:6px;flex-wrap:wrap;align-items:center">${s.canYes ? `<button class="big primary" data-yes="${esc(s.id)}">✔ Yes / Go</button>` : ""}${s.kind !== "interactive" ? `<button class="big" data-wrap="${esc(s.id)}" title="Send /wrap: wrap up. The session keeps running.">⏏ Wrap</button><button class="big danger" data-termexit="${esc(s.id)}" title="Wrap up, exit, then delete the session and its card">⏻ Close</button>` : ""}<button class="big" data-open="${esc(s.id)}" title="${s.kind === "interactive" ? "Bring your terminal app forward" : "Attach in a new terminal window (tiled + colour-coded)"}">↗ App</button>${s.autoYes ? `<span class="hint">auto-yes on</span>` : ""}</div>` : ""}
       ${s.alive && s.kind !== "interactive" && s.term_line ? `<div class="term hint mono" title="${esc(s.term_line)}">${esc(s.term_line)}</div>` : ""}
       <div class="meta">
         ${s.autoYes ? `<span class="tag" style="color:var(--done)">auto-yes</span>` : ""}
@@ -512,11 +515,11 @@ function renderStack(focus = false) {
     let b = st.querySelector(`.tbar[data-tsel="${s.id}"]`);
     if (!b) { b = document.createElement("div"); b.className = "tbar"; b.dataset.tsel = s.id; st.appendChild(b); }
     b.style.order = 2 * i; b.style.setProperty("--sc", s.color); b.classList.toggle("on", s.id === S.tsel);
-    const c = stClass(s.state), line = s.term_line || s.detail || "";
+    const c = cls(s), line = s.term_line || s.detail || "";
     const base = p => shortPath(p).split("/").pop(), moved = s.work && s.work !== s.cwd;
     // the card's top two lines, on one row: project (→ where it is working now), then name + status
     const h = `<span class="pj mono" title="${esc(s.cwd)}${moved ? " — now working in " + esc(s.work) : ""}"><b>${esc(base(s.cwd))}</b>${moved ? ` <span class="work">→ <b>${esc(base(s.work))}</b></span>` : ""}</span><span class="dot" style="background:${esc(s.color)}"></span><span class="nm">${esc(s.name)}</span><span class="pill st-${c}">${c === "input" ? "needs you" : esc(s.state)}</span><span class="tl hint mono"></span>`
-      + (c === "input" ? `<button class="btn primary" data-yes="${esc(s.id)}">✔ Yes / Go</button>` : "")
+      + (s.canYes ? `<button class="btn primary" data-yes="${esc(s.id)}">✔ Yes / Go</button>` : "")
       + `<button class="btn" data-wrap="${esc(s.id)}" title="Send /wrap: wrap up. The session keeps running.">⏏ Wrap</button><button class="btn danger" data-termexit="${esc(s.id)}" title="Wrap up, exit, then delete the session and its card" ${EXITING[s.id] || s.closing ? "disabled" : ""}>${EXITING[s.id] || s.closing ? "Closing…" : "⏻ Close"}</button><button class="btn" data-sd="${esc(s.id)}" title="Open the full panel: Stop, Exit, auto-yes, Reconnect, ↗ App">⤢</button>`;
     if (b._h !== h) { b.innerHTML = h; b._h = h; b._l = null; }     // untouched bars keep their hover and half-finished clicks
     if (b._l !== line) { const tl = b.querySelector(".tl"); tl.textContent = line; tl.title = line; b._l = line; }   // the line ticks every poll: only its text node changes, the bar is not repainted
@@ -532,7 +535,7 @@ async function renderDrawer() {
   const d = S.drawer; if (!d) return;
   if (d.kind === "session") {
     const s = S.sessions.find(x => x.id === d.id); if (!s) return;
-    const c = stClass(s.state);
+    const c = cls(s);
     $("#dhd").innerHTML = `<button class="btn xl" data-close title="Close this window (Esc); the session keeps running">✕</button><div><h2><span class="dot" style="background:${esc(s.color)};margin-right:8px"></span>${esc(s.name)}</h2><span class="pill st-${c}">${esc(s.state)}</span> <span class="hint mono">${esc(s.id)}</span> <span class="hint mono" title="${esc(s.work || s.cwd)}">${esc(shortPath(s.work || s.cwd))}</span></div>
       `;
     // one view per kind: a background session is its terminal (the card already shows status/ask/folder/tokens);
@@ -541,7 +544,7 @@ async function renderDrawer() {
     const tabs = [d.tab];
     $("#drawer").classList.toggle("wide", d.tab === "terminal");
     const appBtn = `<button class="btn" data-open="${esc(s.id)}" title="${s.kind === "interactive" ? "Bring your terminal app forward" : "Attach in your terminal app"}">↗ App</button>`; const acts = appBtn + (s.alive && !s.finished && s.kind !== "interactive"
-        ? (c === "input" ? `<button class="big primary" data-yes="${esc(s.id)}">✔ Yes / Go</button>` : "") + `<button class="big" data-wrap="${esc(s.id)}" title="Send /wrap: update CLAUDE.md, notes and memory. The session keeps running.">⏏ Wrap</button><button class="big danger" data-stop="${esc(s.id)}" title="Wrap up, then stop (Shift-click: stop now, no wrap)">Stop</button>` : (s.finished ? `<button class="big ${s.wrapped ? "primary" : ""}" data-closesess="${esc(s.id)}" title="claude rm: delete this session and its worktree, remove the card">🗑 Delete session</button>` : ""));
+        ? (s.canYes ? `<button class="big primary" data-yes="${esc(s.id)}">✔ Yes / Go</button>` : "") + `<button class="big" data-wrap="${esc(s.id)}" title="Send /wrap: update CLAUDE.md, notes and memory. The session keeps running.">⏏ Wrap</button><button class="big danger" data-stop="${esc(s.id)}" title="Wrap up, then stop (Shift-click: stop now, no wrap)">Stop</button>` : (s.finished ? `<button class="big ${s.wrapped ? "primary" : ""}" data-closesess="${esc(s.id)}" title="claude rm: delete this session and its worktree, remove the card">🗑 Delete session</button>` : ""));
     const head = `<div class="seg" style="margin-bottom:16px">${tabs.length > 1 ? tabs.map(t => `<button data-tab="${t}" class="big ${d.tab === t ? "on" : ""}">${t[0].toUpperCase() + t.slice(1)}</button>`).join("") : ""}<span class="grow"></span>${acts}</div>`;
     if (d.tab === "terminal") {
       // one bar, above the terminal: everything that was split between the drawer head and the strip under the terminal
@@ -642,13 +645,13 @@ const FAV = $("#fav").href;
 function badge(n) {
   document.title = n ? `(${n}) needs you · Overlook` : "Overlook";
   $("#navStatus").classList.toggle("alert", n > 0);
-  $("#c-status").textContent = n ? `● ${n} need${n === 1 ? "s" : ""} you` : (S.sessions.filter(x => stClass(x.state) === "working").length || "");
+  $("#c-status").textContent = n ? `● ${n} need${n === 1 ? "s" : ""} you` : (S.sessions.filter(x => cls(x) === "working").length || "");
   $("#fav").href = n ? FAV.replace("</svg>", "<circle cx='25' cy='7' r='6.5' fill='%23f2b84b' stroke='%23111214' stroke-width='1.5'/></svg>") : FAV;
 }
 function checkAlerts() {
-  const need = S.sessions.filter(s => stClass(s.state) === "input");
+  const need = S.sessions.filter(s => cls(s) === "input");
   badge(need.length);
-  const now = new Map(S.sessions.map(s => [s.id, stClass(s.state)]));
+  const now = new Map(S.sessions.map(s => [s.id, cls(s)]));
   if (ALERTS.prev) {
     const fresh = need.filter(s => ALERTS.prev.get(s.id) !== "input");
     if (fresh.length && ALERTS.on) {

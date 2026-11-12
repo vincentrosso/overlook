@@ -579,6 +579,9 @@ def sessions() -> list[dict]:
         v["finished"] = is_finished(v)
         v["closing"] = v["id"] in _pending_close
         v["term_line"] = _term_lines.get(v["id"], "") if v.get("alive") else ""
+        v["prompt"] = _term_prompts.get(v["id"], "") if v.get("alive") and v.get("kind") == "background" else ""
+        v["needs"] = needs_you(v)
+        v["canYes"] = v["needs"] and v.get("kind") == "background" and not v["finished"]
         v.setdefault("work", v.get("cwd", ""))
         try:
             v["progress"] = progress_for(Path(v["dir"]) if v.get("dir") else None,
@@ -833,6 +836,7 @@ def screen_text(jid: str) -> str:
 # line above the input box. Polled by one thread, sequentially, only while a browser is
 # actually looking (`claude logs` spawns node, ~0.8s each; several jobs share this laptop).
 _term_lines: dict[str, str] = {}
+_term_prompts: dict[str, str] = {}   # session id -> "permission" | "menu" while that prompt is on its screen
 _term_backoff: dict[str, float] = {}
 _term_viewed = {"at": 0.0}
 TERM_SGR_RE = re.compile(r"\x1b\[[0-9;]*m")
@@ -848,15 +852,41 @@ def _whole_row(l: str) -> bool:
     return l.count("(") == l.count(")") and (l[0] not in SPINNERS or (l[1:2] == " " and l[2:3].isupper()))
 
 
-def term_line(jid: str) -> str:
+def prompt_kind(out: str) -> str:
+    """A permission / menu prompt sitting on the screen right now, else "". The job's own state says
+    "working" while one is up, so without this the card never asks for you and has no Yes / Go.
+    Read from the END of the replay only: an answered prompt scrolls out as soon as output resumes."""
+    t = ANSI_RE.sub("\n", out[-6000:])
+    tail = "\n".join(" ".join(l.split()) for l in t.splitlines() if l.strip())[-700:]
+    kind = yes_plan(tail)[0]
+    return kind if kind in ("permission", "menu") else ""
+
+
+NEEDS_RE = re.compile(r"input|block|wait|question|permission", re.I)
+NOT_NEEDS_RE = re.compile(r"work|run|active|start|done|complete|finish|success", re.I)   # the UI's stClass order
+
+
+def needs_you(s: dict) -> bool:
+    """THE one test for "this session is waiting on you". The count, the filter, the pill, the alerts,
+    Yes / Go and auto-yes all read it, so they cannot disagree."""
+    if not s.get("alive") or s.get("closing"):
+        return False
+    if s.get("prompt"):
+        return True
+    st = s.get("state") or ""
+    return bool(NEEDS_RE.search(st)) and not NOT_NEEDS_RE.search(st)
+
+
+def term_line(jid: str, out: str | None = None) -> str:
     # `claude logs` is a raw pty replay drawn as DIFFS: every redraw starts with cursor-home
     # (ESC[H), and a spinner tick rewrites one digit, so the last 60 cleaned lines are mostly
     # "7", "8", "9". Colours are dropped, column moves become spaces (a word-by-word rewrite
     # of one row reads back as that row), other cursor moves become line breaks, noise
     # fragments go, then frames are walked newest-first for a spinner/status row.
-    code, out = run_claude(["logs", jid], timeout=20, jid=jid)
-    if code:
-        raise RuntimeError(out.strip()[:120] or f"exit {code}")
+    if out is None:
+        code, out = run_claude(["logs", jid], timeout=20, jid=jid)
+        if code:
+            raise RuntimeError(out.strip()[:120] or f"exit {code}")
     lines: list[str] = []
     for frame in reversed(re.split(r"\x1b\[(?:1;1)?H", out)):
         t = ANSI_RE.sub("\n", TERM_COL_RE.sub(" ", TERM_SGR_RE.sub("", frame))).replace("\r", "\n")
@@ -883,13 +913,22 @@ def term_line_loop():
                 jid = s_["id"]
                 if not s_.get("alive") or s_.get("kind") != "background":
                     _term_lines.pop(jid, None)
+                    _term_prompts.pop(jid, None)
                     continue
                 if _term_backoff.get(jid, 0) > time.time():
                     continue
                 try:
-                    line = term_line(jid)
+                    code, out = run_claude(["logs", jid], timeout=20, jid=jid)   # one spawn feeds both
+                    if code:
+                        raise RuntimeError(out.strip()[:120] or f"exit {code}")
+                    line = term_line(jid, out)
                     if line:
                         _term_lines[jid] = line
+                    kind = prompt_kind(out)
+                    if kind:
+                        _term_prompts[jid] = kind
+                    else:
+                        _term_prompts.pop(jid, None)
                 except Exception as e:
                     _term_backoff[jid] = time.time() + 30
                     log(f"term line {jid}: {e!r}")
@@ -1098,9 +1137,9 @@ def auto_yes_loop():
                 jid = s_["id"]
                 if jid not in on or not s_.get("alive") or s_.get("kind") != "background":
                     continue
-                if not re.search(r"block|input|wait|question|permission", (s_.get("state") or "").lower()):
+                if not s_.get("needs"):
                     continue
-                if time.time() - (_iso_epoch(s_.get("updatedAt")) or 0) < 20:
+                if not s_.get("prompt") and time.time() - (_iso_epoch(s_.get("updatedAt")) or 0) < 20:
                     continue
                 recent = [t for t in _poke_log.get(jid, []) if time.time() - t < 3600]
                 if (recent and time.time() - recent[-1] < 90) or len(recent) >= 10:
