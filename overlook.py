@@ -998,6 +998,29 @@ def is_finished(s: dict) -> bool:
 
 
 _pending_close: dict[str, float] = {}   # session id -> epoch Close was asked; rm'd by pending_close_loop once it exits
+_stop_when_done: dict[str, float] = {}  # session id -> epoch a plain wrap was typed in place of the exit command
+
+
+def has_command(s_: dict, text: str) -> bool:
+    """Is this slash command defined for the session: in its profile's commands/ or skills/, or its
+    project's .claude/? A profile without it answers "Unknown command" and never exits, and the
+    card then sat on "Closing…" for 20 minutes."""
+    name = text.strip().lstrip("/").split()[0]
+    jd = find_job_dir(s_["id"])
+    roots = ([jd.parent.parent] if jd else []) + [Path(d) / ".claude" for d in (s_.get("cwd"), s_.get("work")) if d]
+    return any((r / "commands" / f"{name}.md").exists() or (r / "skills" / name).is_dir() for r in roots)
+
+
+def type_exit(s_: dict, reason: str) -> dict:
+    """Type the exit command (wrap, then the session stops itself). Where the profile has no such
+    command, type the plain wrap and let pending_close_loop stop the session once that turn ends."""
+    jid = s_["id"]
+    fallback = not has_command(s_, EXIT_TEXT)
+    res = poke(jid, reason, text=WRAP_TEXT if fallback else EXIT_TEXT)
+    if res.get("ok") and fallback:
+        _stop_when_done[jid] = time.time()
+        log(f"{reason} {jid}: no {EXIT_TEXT} in its profile — typed {WRAP_TEXT}, stopping it when the wrap ends")
+    return res
 
 
 def _forget(jid: str) -> None:
@@ -1038,7 +1061,7 @@ def close_session(jid: str) -> tuple[int, dict]:
     if jid in _pending_close:
         return 202, {"ok": True, "pending": "wrapping", "note": "already closing"}
     if not _exit_recently(jid):
-        res = poke(jid, "close", text=EXIT_TEXT)
+        res = type_exit(s_, "close")
         if not res.get("ok"):
             return 409, {"ok": False, "error": res.get("error") or "couldn't type /wrape into it"}
         mark_wrapped(jid); _exit_sent[jid] = time.time()
@@ -1056,7 +1079,7 @@ def stop_session(jid: str, force: bool = False) -> tuple[int, dict]:
         code, out = run_claude(["stop", jid], timeout=30, jid=jid)
         _live_cache["at"] = 0
         return (200 if code == 0 else 500), {"ok": code == 0, "output": out.strip()}
-    res = poke(jid, "stop", text=EXIT_TEXT)
+    res = type_exit(s_, "stop")
     if not res.get("ok"):
         return 409, {"ok": False, "error": res.get("error") or "couldn't type /wrape into it — Stop again with force"}
     mark_wrapped(jid); _exit_sent[jid] = time.time()
@@ -1069,11 +1092,20 @@ def pending_close_loop():
     gets a plain stop, then rm (the wrap hung or was ignored); the Close is never just forgotten."""
     while True:
         time.sleep(5)
-        if not _pending_close:
+        if not _pending_close and not _stop_when_done:
             continue
         try:
             _live_cache["at"] = 0
             live = {s["id"]: s for s in sessions()}
+            for jid, since in list(_stop_when_done.items()):     # the wrap-only fallback: stop it ourselves
+                s_ = live.get(jid)
+                if not s_ or not s_.get("alive") or time.time() - since > 1200:
+                    _stop_when_done.pop(jid, None)               # gone, or the 20 min rule below has it
+                elif is_finished(s_) and (_iso_epoch(s_.get("updatedAt")) or 0) > since:
+                    log(f"stop {jid}: wrap finished")
+                    run_claude(["stop", jid], timeout=30, jid=jid)
+                    _stop_when_done.pop(jid, None)
+                    live[jid] = {**s_, "alive": False}
             for jid, since in list(_pending_close.items()):
                 s_ = live.get(jid)
                 if s_ and s_.get("alive") and time.time() - since < 1200:
