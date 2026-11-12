@@ -96,7 +96,7 @@ def load_settings() -> dict:
     d.setdefault("names", {})   # session id -> display name set from the dashboard
     d.setdefault("colors", {})  # session id -> palette index override (click the dot to cycle)
     d.setdefault("slots", {})   # session id -> grid slot its terminal window was placed in
-    d.setdefault("wrapped", {}) # session id -> epoch when /wrape was sent (Close is offered once it exits)
+    d.setdefault("wrapped", {}) # session id -> epoch when /bye was sent (Close is offered once it exits)
     return d
 
 
@@ -808,11 +808,11 @@ def launch(body: dict) -> tuple[int, dict]:
 ANSI_RE = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]|\x1b\][^\x07]*\x07|\x1b[()][A-Z0-9]")
 YES_TEXT = os.environ.get("OVERLOOK_YES_TEXT", "yes, go ahead")
 # The ⏏ Wrap buttons type /wrap: update CLAUDE.md, notes and memory, and the session KEEPS RUNNING.
-# Everything that ends a session (Stop, Exit, Delete) types /wrape = /wrap, then stop the job itself, so the
+# Everything that ends a session (Stop, Exit, Delete) types /bye = /wrap, then stop the job itself, so the
 # exit happens AFTER the wrap report is written rather than racing it from here.
 WRAP_TEXT = os.environ.get("OVERLOOK_WRAP_TEXT", "/wrap")
-EXIT_TEXT = os.environ.get("OVERLOOK_EXIT_TEXT", "/wrape")
-_exit_sent: dict[str, float] = {}   # session id -> epoch /wrape was typed. A plain /wrap does not count: it never exits.
+EXIT_TEXT = os.environ.get("OVERLOOK_EXIT_TEXT", "/bye")
+_exit_sent: dict[str, float] = {}   # session id -> epoch /bye was typed. A plain /wrap does not count: it never exits.
 
 
 def _exit_recently(jid: str, within: float = 1800) -> bool:
@@ -1028,8 +1028,8 @@ def _wrapped_recently(jid: str, within: float = 1800) -> bool:
 
 def close_session(jid: str) -> tuple[int, dict]:
     """Anything that closes a session wraps it first. Dead already: `claude rm` now. Alive: type
-    /wrape (unless /wrape was already typed in the last 30 min), remember the id, and pending_close_loop
-    rm's it once the daemon has exited (/wrape's last step is `claude stop` on itself)."""
+    /bye (unless /bye was already typed in the last 30 min), remember the id, and pending_close_loop
+    rm's it once the daemon has exited (/bye's last step is `claude stop` on itself)."""
     s_ = next((x for x in sessions() if x["id"] == jid), None)
     if not s_ or not s_.get("alive"):
         return _rm(jid)
@@ -1040,7 +1040,7 @@ def close_session(jid: str) -> tuple[int, dict]:
     if not _exit_recently(jid):
         res = poke(jid, "close", text=EXIT_TEXT)
         if not res.get("ok"):
-            return 409, {"ok": False, "error": res.get("error") or "couldn't type /wrape into it"}
+            return 409, {"ok": False, "error": res.get("error") or "couldn't type /bye into it"}
         mark_wrapped(jid); _exit_sent[jid] = time.time()
     _pending_close[jid] = time.time()
     log(f"close {jid}: wrapping first, rm when it exits")
@@ -1048,7 +1048,7 @@ def close_session(jid: str) -> tuple[int, dict]:
 
 
 def stop_session(jid: str, force: bool = False) -> tuple[int, dict]:
-    """Stop wraps first too: /wrape ends with `claude stop` on itself. `force` is the old raw stop,
+    """Stop wraps first too: /bye ends with `claude stop` on itself. `force` is the old raw stop,
     for a session that is hung or ignoring its input."""
     s_ = next((x for x in sessions() if x["id"] == jid), None)
     if force or not s_ or not s_.get("alive") or _exit_recently(jid, 600):
@@ -1058,7 +1058,7 @@ def stop_session(jid: str, force: bool = False) -> tuple[int, dict]:
         return (200 if code == 0 else 500), {"ok": code == 0, "output": out.strip()}
     res = poke(jid, "stop", text=EXIT_TEXT)
     if not res.get("ok"):
-        return 409, {"ok": False, "error": res.get("error") or "couldn't type /wrape into it — Stop again with force"}
+        return 409, {"ok": False, "error": res.get("error") or "couldn't type /bye into it — Stop again with force"}
     mark_wrapped(jid); _exit_sent[jid] = time.time()
     log(f"stop {jid}: wrapping first")
     return 202, {"ok": True, "pending": "wrapping"}
@@ -1686,7 +1686,7 @@ class Handler(BaseHTTPRequestHandler):
             if res.get("ok"):
                 mark_wrapped(m.group(1))
             return self._send(200 if res.get("ok") else 409, res)
-        m = re.match(r"^/api/sessions/([^/]+)/wrapped$", p)   # the terminal tab typed /wrape itself
+        m = re.match(r"^/api/sessions/([^/]+)/wrapped$", p)   # the terminal tab typed /bye itself
         if m and ID_RE.match(m.group(1)):
             mark_wrapped(m.group(1))
             return self._send(200, {"ok": True})
